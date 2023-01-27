@@ -290,9 +290,19 @@ combinePeaks <- function(x, intensityFun = base::mean,
       wm(mz, w + 1, na.rm = TRUE, USE.NAMES = FALSE))
   } else
     mzs <- vapply1d(mzs, FUN  = mzFun)
+  
+#New lines start ---------------------------------------------
+  ints <- vapply1d(ints, FUN = intensityFun)
+  mz_order <- order(mzs)
+  mzs <- mzs[mz_order]
+  ints <- ints[mz_order]
+#New lines end ------------------------------------------------
+  
   if (is.unsorted(mzs))
     stop("m/z values of combined spectrum are not ordered increasingly")
-  cbind(mz = mzs, intensity = vapply1d(ints, FUN = intensityFun))
+#Modifies line below  
+  #cbind(mz = mzs, intensity = vapply1d(ints, FUN = intensityFun))
+  cbind(mz = mzs, intensity = ints)
 }
 
 #' pairwise comparison of peak matrices. Parameters `xPrecursorMz` and
