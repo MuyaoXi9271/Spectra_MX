@@ -13,8 +13,9 @@ NULL
 #' The `Spectra` class encapsules spectral mass spectrometry data and
 #' related metadata.
 #'
-#' It supports multiple data backends, e.g. in-memory ([MsBackendDataFrame()]),
-#' on-disk as mzML ([MsBackendMzR()]) or HDF5 ([MsBackendHdf5Peaks()]).
+#' It supports multiple data backends, e.g. in-memory ([MsBackendMemory],
+#' [MsBackendDataFrame()]), on-disk as mzML ([MsBackendMzR()]) or HDF5
+#' ([MsBackendHdf5Peaks()]).
 #'
 #' @details
 #'
@@ -22,10 +23,14 @@ NULL
 #' i.e. data manipulations such as performed with `replaceIntensitiesBelow` are
 #' not applied immediately to the data, but applied on-the-fly to the spectrum
 #' data once it is retrieved. For some backends that allow to write data back
-#' to the data storage (such as the [MsBackendDataFrame()] and
-#' [MsBackendHdf5Peaks()]) it is possible to apply to queue with the
+#' to the data storage (such as the [MsBackendMemory()], [MsBackendDataFrame()]
+#' and [MsBackendHdf5Peaks()]) it is possible to apply to queue with the
 #' `applyProcessing` function. See the *Data manipulation and analysis
 #' methods* section below for more details.
+#'
+#' To apply arbitrary functions to a `Spectra` use the `spectrapply` function
+#' (or directly [chunkapply()] for chunk-wise processing). See description of
+#' the `spectrapply` function below for details.
 #'
 #' For details on plotting spectra, see [plotSpectra()].
 #'
@@ -51,9 +56,9 @@ NULL
 #' `Spectra` classes can be created with the `Spectra` constructor function
 #' which supports the following formats:
 #'
-#' - parameter `object` is a `DataFrame` containing the spectrum data. The
-#'   provided `backend` (by default a [MsBackendDataFrame-class]) will be
-#'   initialized with that data.
+#' - parameter `object` is a `data.frame` or `DataFrame` containing the
+#'   spectrum data. The provided `backend` (by default a
+#'   [MsBackendMemory-class]) will be initialized with that data.
 #'
 #' - parameter `object` is a [MsBackend-class] (assumed to be already
 #'   initialized).
@@ -74,12 +79,16 @@ NULL
 #'
 #' The backend of a `Spectra` object can be changed with the `setBackend`
 #' method that takes an instance of the new backend as second parameter
-#' `backend`. A call to `setBackend(sps, backend = MsBackendDataFrame())` would
-#' for example change the backend or `sps` to the *in-memory*
-#' `MsBackendDataFrame`. Note that it is not possible to change the backend
-#' to a *read-only* backend (such as the [MsBackendMzR()] backend). `setBackend`
-#' changes the `"dataOrigin"` variable of the resulting `Spectra` object to the
-#' `"dataStorage"` variable of the backend before the switch.
+#' `backend`. A call to `setBackend(sps, backend = MsBackendDataFrame())`
+#' would for example change the backend of `sps` to the *in-memory*
+#' `MsBackendDataFrame`. Changing to a backend is only supported if that
+#' backend has a `data` parameter in its `backendInitialize` method and if
+#' `supportsSetBackend` returns `TRUE` for that backend. `setBackend` will
+#' transfer the full spectra data from the originating backend as a
+#' `DataFrame` to the new backend.
+#' Most *read-only* backends do not support `setBackend`. It is for example
+#' not possible to change the backend to a *read-only* backend (such as
+#' the [MsBackendMzR()] backend).
 #'
 #' The definition of the function is:
 #' `setBackend(object, backend, ..., f = dataStorage(object),
@@ -88,7 +97,7 @@ NULL
 #' - parameter `object`: the `Spectra` object.
 #'
 #' - parameter `backend`: an instance of the new backend, e.g.
-#'   `MsBackendDataFrame()`.
+#'   `[MsBackendMemory()]`.
 #'
 #' - parameter `f`: factor allowing to parallelize the change of the backends.
 #'   By default the process of copying the spectra data from the original to the
@@ -443,10 +452,11 @@ NULL
 #' applied on-the-fly to spectra data each time it is accessed. This lazy
 #' execution guarantees the same functionality for `Spectra` objects with
 #' any backend, i.e. backends supporting to save changes to spectrum data
-#' ([MsBackendDataFrame()] or [MsBackendHdf5Peaks()]) as well as read-only
-#' backends (such as the [MsBackendMzR()]). Note that for the former it is
-#' possible to apply the processing queue and write the modified peak data back
-#' to the data storage with the `applyProcessing` function.
+#' ([MsBackendMemory], [MsBackendDataFrame()] or [MsBackendHdf5Peaks()]) as
+#' well as read-only backends (such as the [MsBackendMzR()]).
+#' Note that for the former it is possible to apply the processing queue and
+#' write the modified peak data back to the data storage with the
+#' `applyProcessing` function.
 #'
 #' - `addProcessing`: adds an arbitrary function that should be applied to the
 #'   peaks matrix of every spectrum in `object`. The function (can be passed
@@ -503,8 +513,9 @@ NULL
 #'   evaluation queue are applied. Be aware that calling `combineSpectra` on a
 #'   `Spectra` object with certain backends that allow modifications might
 #'   **overwrite** the original data. This does not happen with a
-#'   `MsBackendDataFrame` backend, but with a `MsBackendHdf5Peaks` backend the
-#'   m/z and intensity values in the original hdf5 file(s) will be overwritten.
+#'   `MsBackendMemory` or `MsBackendDataFrame` backend, but with a
+#'   `MsBackendHdf5Peaks` backend the m/z and intensity values in the original
+#'   hdf5 file(s) will be overwritten.
 #'   The function returns a `Spectra` of length equal to the unique levels
 #'   of `f`.
 #'
@@ -520,7 +531,10 @@ NULL
 #'   information and examples). The `MAPFUN` function should have parameters
 #'   `x`, `y`, `xPrecursorMz` and `yPrecursorMz` as these values are passed to
 #'   the function. In addition to `joinPeaks()` also [joinPeaksGnps()] is
-#'   supported for GNPS-like similarity score calculations.
+#'   supported for GNPS-like similarity score calculations. Note that
+#'   `joinPeaksGnps` should only be used in combination with
+#'   `FUN = MsCoreUtils::gnps` (see [joinPeaksGnps()] for more information and
+#'   details).
 #'   `FUN` is supposed to be a function to compare intensities of (matched)
 #'   peaks of the two spectra that are compared. The function needs to take two
 #'   matrices with columns `"mz"` and `"intensity"` as input and is supposed
@@ -563,27 +577,35 @@ NULL
 #' - `processingLog`: returns a `character` vector with the processing log
 #'   messages.
 #'
-#' - `spectrapply`: apply a given function to each spectrum in a `Spectra`
-#'   object. The `Spectra` is splitted into individual spectra and on each of
-#'   them (i.e. `Spectra` of length 1) the function `FUN` is applied. Additional
-#'   parameters to `FUN` can be passed with the `...` argument. Parameter
-#'   `BPPARAM` allows to enable parallel processing, which however makes only
-#'   sense if `FUN` is computational intense. `spectrapply` returns a `list`
-#'   (same length than `object`) with the result from `FUN`. See examples for
-#'   more details.
-#'   Note that the result and its order depends on the factor `f` used for
-#'   splitting `object` with `split`, i.e. no re-ordering or `unsplit` is
-#'   performed on the result.
+#' - `spectrapply`: apply a given function to each individual spectrum or sets
+#'   of a `Spectra` object. By default, the `Spectra` is split into individual
+#'   spectra (i.e. `Spectra` of length 1) and the function `FUN` is applied to
+#'   each of them. An alternative splitting can be defined with parameter `f`.
+#'   Parameters for `FUN` can be passed using `...`.
+#'   The returned result and its order depend on the function `FUN` and how
+#'   `object` is split (hence on `f`, if provided). Parallel processing is
+#'   supported and can be configured with parameter `BPPARAM`, is however only
+#'   suggested for computational intense `FUN`.
+#'   As an alternative to the (eventual parallel) processing of the full
+#'   `Spectra`, `spectrapply` supports also a chunk-wise processing. For this,
+#'   parameter `chunkSize` needs to be specified. `object` is then split into
+#'   chunks of size `chunkSize` which are then (stepwise) processed by `FUN`.
+#'   This guarantees a lower memory demand (especially for on-disk backends)
+#'   since only the data for one chunk needs to be loaded into memory in each
+#'   iteration. Note that by specifying `chunkSize`, parameters `f` and
+#'   `BPPARAM` will be ignored.
+#'   See also [chunkapply()] or examples below for details on chunk-wise
+#'   processing.
 #'
 #' - `smooth`: smooth individual spectra using a moving window-based approach
-#'    (window size = `2 * halfWindowSize`). Currently, the
-#'    Moving-Average- (`method = "MovingAverage"`),
-#'    Weighted-Moving-Average- (`method = "WeightedMovingAverage")`,
-#'    weights depending on the distance of the center and calculated
-#'    `1/2^(-halfWindowSize:halfWindowSize)`) and
-#'    Savitzky-Golay-Smoothing (`method = "SavitzkyGolay"`) are supported.
-#'    For details how to choose the correct `halfWindowSize` please see
-#'    [`MsCoreUtils::smooth()`].
+#'   (window size = `2 * halfWindowSize`). Currently, the
+#'   Moving-Average- (`method = "MovingAverage"`),
+#'   Weighted-Moving-Average- (`method = "WeightedMovingAverage")`,
+#'   weights depending on the distance of the center and calculated
+#'   `1/2^(-halfWindowSize:halfWindowSize)`) and
+#'   Savitzky-Golay-Smoothing (`method = "SavitzkyGolay"`) are supported.
+#'   For details how to choose the correct `halfWindowSize` please see
+#'   [`MsCoreUtils::smooth()`].
 #'
 #' - `pickPeaks`: picks peaks on individual spectra using a moving window-based
 #'   approach (window size = `2 * halfWindowSize`). For noisy spectra there
@@ -624,9 +646,12 @@ NULL
 #'
 #' @param backend For `Spectra`: [MsBackend-class] to be used as backend. See
 #'     section on creation of `Spectra` objects for details. For `setBackend`:
-#'     instance of [MsBackend-class]. See section on creation of `Spectra`
-#'     objects for details. For `export`: [MsBackend-class] to be used to export
-#'     the data.
+#'     instance of [MsBackend-class] that supports `setBackend` (i.e. for
+#'     which `supportsSetBackend` returns `TRUE`). Such backends have a
+#'     parameter `data` in their `backendInitialize` function that support
+#'     passing the full spectra data to the initialize method. See section on
+#'     creation of `Spectra` objects for details.
+#'     For `export`: [MsBackend-class] to be used to export the data.
 #'
 #' @param binSize For `bin`: `numeric(1)` defining the size for the m/z bins.
 #'     Defaults to `binSize = 1`.
@@ -636,6 +661,9 @@ NULL
 #'     of the [MsBackend-class].
 #'
 #' @param breaks For `bin`: `numeric` defining the m/z breakpoints between bins.
+#'
+#' @param chunkSize For `spectrapply`: size of the chunks into which `Spectra`
+#'     should be split. This parameter overrides parameters `f` and `BPPARAM`.
 #'
 #' @param columns For `spectraData` accessor: optional `character` with column
 #'     names (spectra variables) that should be included in the
@@ -678,6 +706,7 @@ NULL
 #'     details.
 #'     For `bin`: function to aggregate intensity values of peaks falling into
 #'     the same bin. Defaults to `FUN = sum` thus summing up intensities.
+#'     For `spectrapply` and `chunkapply`: function to be applied to `Spectra`.
 #'
 #' @param halfWindowSize
 #' - For `pickPeaks`: `integer(1)`, used in the
@@ -879,10 +908,18 @@ NULL
 #' sciex
 #'
 #' ## The MS data is on disk and will be read into memory on-demand. We can
-#' ## however change the backend to a MsBackendDataFrame backend which will
+#' ## however change the backend to a MsBackendMemory backend which will
 #' ## keep all of the data in memory.
-#' sciex_im <- setBackend(sciex, MsBackendDataFrame())
+#' sciex_im <- setBackend(sciex, MsBackendMemory())
 #' sciex_im
+#'
+#' ## The `MsBackendMemory()` supports the `setBackend` method:
+#' supportsSetBackend(MsBackendMemory())
+#'
+#' ## Thus, it is possible to change to that backend with `setBackend`. Most
+#' ## read-only backends however don't support that, such as the
+#' ## `MsBackendMzR` and `setBackend` would fail to change to that backend.
+#' supportsSetBackend(MsBackendMzR())
 #'
 #' ## The on-disk object `sciex` is light-weight, because it does not keep the
 #' ## MS peak data in memory. The `sciex_im` object in contrast keeps all the
@@ -1108,7 +1145,7 @@ NULL
 #' ## `reset` after a `applyProcessing` can not restore the data, because the
 #' ## data in the backend was changed. Similarly, `reset` after any filter
 #' ## operations can not restore data for a `Spectra` with a
-#' ## `MsBackendDataFrame`.
+#' ## `MsBackendMemory` or `MsBackendDataFrame`.
 #' res_2 <- applyProcessing(res)
 #' res_rest <- reset(res_2)
 #' lengths(mz(res))
@@ -1152,6 +1189,14 @@ NULL
 #' ## data (such as `intensity`) are much more efficient than using `lapply`:
 #' res <- lapply(intensity(sciex_im[1:20]), mean)
 #' head(res)
+#'
+#' ## As an alternative, applying a function `FUN` to a `Spectra` can be
+#' ## performed *chunk-wise*. The advantage of this is, that only the data for
+#' ## one chunk at a time needs to be loaded into memory reducing the memory
+#' ## demand. This type of processing can be performed by specifying the size
+#' ## of the chunks (i.e. number of spectra per chunk) with the `chunkSize`
+#' ## parameter
+#' spectrapply(sciex_im[1:20], lengths, chunkSize = 5L)
 #'
 #' ## Calculating the precursor intensity for MS2 spectra:
 #' ##
@@ -1281,7 +1326,7 @@ setMethod("show", "Spectra",
 #' @rdname Spectra
 setMethod("Spectra", "missing", function(object, processingQueue = list(),
                                          metadata = list(), ...,
-                                         backend = MsBackendDataFrame(),
+                                         backend = MsBackendMemory(),
                                          BPPARAM = bpparam()) {
     new("Spectra", metadata = metadata, processingQueue = processingQueue,
         backend = backend)
@@ -1303,15 +1348,19 @@ setMethod("Spectra", "character", function(object, processingQueue = list(),
                                            source = MsBackendMzR(),
                                            backend = source,
                                            ..., BPPARAM = bpparam()) {
-    callNextMethod(object = object, processingQueue = processingQueue,
-                   metadata = metadata, source = source, backend = backend,
-                   ..., BPPARAM = BPPARAM)
+    if (!length(object))
+        Spectra(backend, metadata = metadata,
+                processingQueue = processingQueue)
+    else
+        callNextMethod(object = object, processingQueue = processingQueue,
+                       metadata = metadata, source = source, backend = backend,
+                       ..., BPPARAM = BPPARAM)
 })
 
 #' @rdname Spectra
 setMethod("Spectra", "ANY", function(object, processingQueue = list(),
                                      metadata = list(),
-                                     source = MsBackendDataFrame(),
+                                     source = MsBackendMemory(),
                                      backend = source,
                                      ..., BPPARAM = bpparam()) {
     sp <- new("Spectra", metadata = metadata, processingQueue = processingQueue,
@@ -1325,37 +1374,46 @@ setMethod("Spectra", "ANY", function(object, processingQueue = list(),
 #' @rdname Spectra
 #'
 #' @exportMethod setBackend
-setMethod("setBackend", c("Spectra", "MsBackend"),
-          function(object, backend, f = dataStorage(object), ...,
-                   BPPARAM = bpparam()) {
-              backend_class <- class(object@backend)
-              if (isReadOnly(backend))
-                  stop(class(backend), " is read-only. Changing backend to a ",
-                       "read-only backend is not supported.")
-              f <- force(factor(f, levels = unique(f)))
-              if (length(f) != length(object))
-                  stop("length of 'f' has to match the length of 'object'")
-              data_storage <- object@backend$dataStorage
-              bknds <- bplapply(split(object@backend, f = f), function(z, ...) {
-                  backendInitialize(backend,
-                                    data = spectraData(z),
-                                    ...,
-                                    BPPARAM = SerialParam())
-              }, ..., BPPARAM = BPPARAM)
-              bknds <- backendMerge(bknds)
-              ## That below ensures the backend is returned in its original
-              ## order - unsplit does unfortunately not work.
-              if (is.unsorted(f))
-                  bknds <- bknds[order(unlist(split(seq_along(bknds), f),
-                                              use.names = FALSE))]
-              bknds$dataOrigin <- data_storage
-              object@backend <- bknds
-              object@processing <- .logging(object@processing,
-                                            "Switch backend from ",
-                                            backend_class, " to ",
-                                            class(object@backend))
-              object
-          })
+setMethod(
+    "setBackend", c("Spectra", "MsBackend"),
+    function(object, backend, f = dataStorage(object), ...,
+             BPPARAM = bpparam()) {
+        backend_class <- class(object@backend)
+        if (!supportsSetBackend(backend))
+            stop(class(backend), " does not support 'setBackend'")
+        if (!length(object)) {
+            bknds <- backendInitialize(
+                backend, data = spectraData(object@backend), ...)
+        } else {
+            f <- force(factor(f, levels = unique(f)))
+            if (length(f) != length(object))
+                stop("length of 'f' has to match the length of 'object'")
+            if (length(levels(f)) == 1L) {
+                bknds <- backendInitialize(
+                    backend, data = spectraData(object@backend), ...)
+            } else {
+                bknds <- bplapply(
+                    split(object@backend, f = f),
+                    function(z, ...) {
+                        backendInitialize(backend,
+                                          data = spectraData(z), ...,
+                                          BPPARAM = SerialParam())
+                    }, ..., BPPARAM = BPPARAM)
+                bknds <- backendMerge(bknds)
+                ## That below ensures the backend is returned in its original
+                ## order - unsplit does unfortunately not work.
+                if (is.unsorted(f))
+                    bknds <- bknds[order(unlist(split(seq_along(bknds), f),
+                                                use.names = FALSE))]
+            }
+        }
+        object@backend <- bknds
+        object@processing <- .logging(object@processing,
+                                      "Switch backend from ",
+                                      backend_class, " to ",
+                                      class(object@backend))
+        object
+    })
 
 #' @rdname Spectra
 #'
@@ -1531,6 +1589,7 @@ setMethod("containsMz", "Spectra", function(object, mz = numeric(),
     cond_fun <- match.fun(match.arg(which))
     if (all(is.na(mz)))
         return(rep(NA, length(object)))
+    mz <- unique(sort(mz))
     if (is(BPPARAM, "SerialParam"))
         .has_mz(object, mz, tolerance = tolerance, ppm = ppm,
                 condFun = cond_fun, parallel = BPPARAM)
@@ -1567,12 +1626,19 @@ setMethod("containsNeutralLoss", "Spectra", function(object, neutralLoss = 0,
 
 #' @rdname Spectra
 #'
+#' @importMethodsFrom ProtGenerics spectrapply
+#'
 #' @exportMethod spectrapply
-setMethod("spectrapply", "Spectra", function(object, FUN,
-                                             f = as.factor(seq_along(object)),
-                                             ..., BPPARAM = SerialParam()) {
+setMethod("spectrapply", "Spectra", function(object, FUN, ...,
+                                             chunkSize = integer(),
+                                             f = factor(),
+                                             BPPARAM = SerialParam()) {
     if (missing(FUN))
         FUN <- identity
+    if (length(chunkSize))
+        return(chunkapply(object, FUN, ..., chunkSize = chunkSize))
+    if (!length(f))
+        f <- as.factor(seq_along(object))
     .lapply(object, FUN = FUN, f = f, ..., BPPARAM = BPPARAM)
 })
 
@@ -1933,7 +1999,8 @@ setMethod("filterMzRange", "Spectra",
           function(object, mz = numeric(), msLevel. = uniqueMsLevels(object)) {
               if (!.check_ms_level(object, msLevel.))
                   return(object)
-              mz <- range(mz)
+              if (!length(mz)) mz <- c(-Inf, Inf)
+              else mz <- range(mz)
               object <- addProcessing(object, .peaks_filter_mz_range,
                                       mz = mz, msLevel = msLevel.,
                                       spectraVariables = "msLevel")
@@ -2061,7 +2128,9 @@ setMethod("filterRt", "Spectra",
               if (length(rt) != 2L || !is.numeric(rt) || rt[1] >= rt[2])
                   stop("Please provide a lower and upper numeric retention",
                        " time range.")
-              suppressWarnings(rt <- range(rt))
+              if (length(rt))
+                  rt <- range(rt)
+              else rt <- c(-Inf, Inf)
               object@backend <- filterRt(object@backend, rt, msLevel.)
               object@processing <- .logging(
                   object@processing,
@@ -2092,8 +2161,6 @@ setMethod("reset", "Spectra", function(object, ...) {
 #' @importMethodsFrom ProtGenerics bin
 #'
 #' @exportMethod bin
-#'
-#' @export
 setMethod("bin", "Spectra", function(x, binSize = 1L, breaks = NULL,
                                      msLevel. = uniqueMsLevels(x),
                                      FUN = sum) {
@@ -2124,8 +2191,6 @@ setMethod("bin", "Spectra", function(x, binSize = 1L, breaks = NULL,
 #' @importFrom MsCoreUtils ndotproduct
 #'
 #' @importMethodsFrom ProtGenerics compareSpectra
-#'
-#' @export ppm
 #'
 #' @exportMethod compareSpectra
 setMethod("compareSpectra", signature(x = "Spectra", y = "Spectra"),
@@ -2160,8 +2225,6 @@ setMethod("compareSpectra", signature(x = "Spectra", y = "missing"),
 ## estimateNoise
 
 ## normalize
-
-## peaksapply
 
 #' @rdname Spectra
 #'
@@ -2271,6 +2334,8 @@ setMethod("smooth", "Spectra",
 #' @exportMethod addProcessing
 #'
 #' @importFrom ProtGenerics ProcessingStep
+#'
+#' @importMethodsFrom ProtGenerics addProcessing
 #'
 #' @importClassesFrom ProtGenerics ProcessingStep
 #'

@@ -130,7 +130,7 @@ estimatePrecursorIntensity(
   processingQueue = list(),
   metadata = list(),
   ...,
-  backend = MsBackendDataFrame(),
+  backend = MsBackendMemory(),
   BPPARAM = bpparam()
 )
 
@@ -156,7 +156,7 @@ estimatePrecursorIntensity(
   object,
   processingQueue = list(),
   metadata = list(),
-  source = MsBackendDataFrame(),
+  source = MsBackendMemory(),
   backend = source,
   ...,
   BPPARAM = bpparam()
@@ -232,8 +232,9 @@ estimatePrecursorIntensity(
 \S4method{spectrapply}{Spectra}(
   object,
   FUN,
-  f = as.factor(seq_along(object)),
   ...,
+  chunkSize = integer(),
+  f = factor(),
   BPPARAM = SerialParam()
 )
 
@@ -443,7 +444,8 @@ For \code{combineSpectra}: function to combine the (peak matrices) of the
 spectra. See section \emph{Data manipulations} and examples below for more
 details.
 For \code{bin}: function to aggregate intensity values of peaks falling into
-the same bin. Defaults to \code{FUN = sum} thus summing up intensities.}
+the same bin. Defaults to \code{FUN = sum} thus summing up intensities.
+For \code{spectrapply} and \code{chunkapply}: function to be applied to \code{Spectra}.}
 
 \item{y}{A \code{Spectra} object. A \code{DataFrame} for \code{joinSpectraData()}.}
 
@@ -494,9 +496,12 @@ For \code{filterMsLevel}: the MS level to which \code{object} should be subsette
 
 \item{backend}{For \code{Spectra}: \linkS4class{MsBackend} to be used as backend. See
 section on creation of \code{Spectra} objects for details. For \code{setBackend}:
-instance of \linkS4class{MsBackend}. See section on creation of \code{Spectra}
-objects for details. For \code{export}: \linkS4class{MsBackend} to be used to export
-the data.}
+instance of \linkS4class{MsBackend} that supports \code{setBackend} (i.e. for
+which \code{supportsSetBackend} returns \code{TRUE}). Such backends have a
+parameter \code{data} in their \code{backendInitialize} function that support
+passing the full spectra data to the initialize method. See section on
+creation of \code{Spectra} objects for details.
+For \code{export}: \linkS4class{MsBackend} to be used to export the data.}
 
 \item{source}{For \code{Spectra}: instance of \linkS4class{MsBackend} that can be used
 to import spectrum data from the provided files. See section \emph{Creation
@@ -526,6 +531,9 @@ m/z values to match peaks or precursor m/z against.}
 
 \item{neutralLoss}{for \code{containsNeutralLoss}: \code{numeric(1)} defining the value
 which should be subtracted from the spectrum's precursor m/z.}
+
+\item{chunkSize}{For \code{spectrapply}: size of the chunks into which \code{Spectra}
+should be split. This parameter overrides parameters \code{f} and \code{BPPARAM}.}
 
 \item{use.names}{For \code{lengths}: ignored.}
 
@@ -646,18 +654,23 @@ See individual method description for the return value.
 The \code{Spectra} class encapsules spectral mass spectrometry data and
 related metadata.
 
-It supports multiple data backends, e.g. in-memory (\code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}}),
-on-disk as mzML (\code{\link[=MsBackendMzR]{MsBackendMzR()}}) or HDF5 (\code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}).
+It supports multiple data backends, e.g. in-memory (\link{MsBackendMemory},
+\code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}}), on-disk as mzML (\code{\link[=MsBackendMzR]{MsBackendMzR()}}) or HDF5
+(\code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}).
 }
 \details{
 The \code{Spectra} class uses by default a lazy data manipulation strategy,
 i.e. data manipulations such as performed with \code{replaceIntensitiesBelow} are
 not applied immediately to the data, but applied on-the-fly to the spectrum
 data once it is retrieved. For some backends that allow to write data back
-to the data storage (such as the \code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}} and
-\code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}) it is possible to apply to queue with the
+to the data storage (such as the \code{\link[=MsBackendMemory]{MsBackendMemory()}}, \code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}}
+and \code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}) it is possible to apply to queue with the
 \code{applyProcessing} function. See the \emph{Data manipulation and analysis
 methods} section below for more details.
+
+To apply arbitrary functions to a \code{Spectra} use the \code{spectrapply} function
+(or directly \code{\link[=chunkapply]{chunkapply()}} for chunk-wise processing). See description of
+the \code{spectrapply} function below for details.
 
 For details on plotting spectra, see \code{\link[=plotSpectra]{plotSpectra()}}.
 
@@ -682,9 +695,9 @@ See also \href{https://github.com/lgatto/MSnbase/issues/525}{this issue}.
 \code{Spectra} classes can be created with the \code{Spectra} constructor function
 which supports the following formats:
 \itemize{
-\item parameter \code{object} is a \code{DataFrame} containing the spectrum data. The
-provided \code{backend} (by default a \linkS4class{MsBackendDataFrame}) will be
-initialized with that data.
+\item parameter \code{object} is a \code{data.frame} or \code{DataFrame} containing the
+spectrum data. The provided \code{backend} (by default a
+\linkS4class{MsBackendMemory}) will be initialized with that data.
 \item parameter \code{object} is a \linkS4class{MsBackend} (assumed to be already
 initialized).
 \item parameter \code{object} is missing, in which case it is supposed that the data
@@ -703,19 +716,23 @@ With \code{...} additional arguments can be passed to the backend's
 
 The backend of a \code{Spectra} object can be changed with the \code{setBackend}
 method that takes an instance of the new backend as second parameter
-\code{backend}. A call to \code{setBackend(sps, backend = MsBackendDataFrame())} would
-for example change the backend or \code{sps} to the \emph{in-memory}
-\code{MsBackendDataFrame}. Note that it is not possible to change the backend
-to a \emph{read-only} backend (such as the \code{\link[=MsBackendMzR]{MsBackendMzR()}} backend). \code{setBackend}
-changes the \code{"dataOrigin"} variable of the resulting \code{Spectra} object to the
-\code{"dataStorage"} variable of the backend before the switch.
+\code{backend}. A call to \code{setBackend(sps, backend = MsBackendDataFrame())}
+would for example change the backend of \code{sps} to the \emph{in-memory}
+\code{MsBackendDataFrame}. Changing to a backend is only supported if that
+backend has a \code{data} parameter in its \code{backendInitialize} method and if
+\code{supportsSetBackend} returns \code{TRUE} for that backend. \code{setBackend} will
+transfer the full spectra data from the originating backend as a
+\code{DataFrame} to the new backend.
+Most \emph{read-only} backends do not support \code{setBackend}. It is for example
+not possible to change the backend to a \emph{read-only} backend (such as
+the \code{\link[=MsBackendMzR]{MsBackendMzR()}} backend).
 
 The definition of the function is:
 \code{setBackend(object, backend, ..., f = dataStorage(object), BPPARAM = bpparam())} and its parameters are:
 \itemize{
 \item parameter \code{object}: the \code{Spectra} object.
 \item parameter \code{backend}: an instance of the new backend, e.g.
-\code{MsBackendDataFrame()}.
+\verb{[MsBackendMemory()]}.
 \item parameter \code{f}: factor allowing to parallelize the change of the backends.
 By default the process of copying the spectra data from the original to the
 new backend is performed separately (and in parallel) for each file. Users
@@ -1021,10 +1038,11 @@ not applied immediately to the spectra, but added to a
 applied on-the-fly to spectra data each time it is accessed. This lazy
 execution guarantees the same functionality for \code{Spectra} objects with
 any backend, i.e. backends supporting to save changes to spectrum data
-(\code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}} or \code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}) as well as read-only
-backends (such as the \code{\link[=MsBackendMzR]{MsBackendMzR()}}). Note that for the former it is
-possible to apply the processing queue and write the modified peak data back
-to the data storage with the \code{applyProcessing} function.
+(\link{MsBackendMemory}, \code{\link[=MsBackendDataFrame]{MsBackendDataFrame()}} or \code{\link[=MsBackendHdf5Peaks]{MsBackendHdf5Peaks()}}) as
+well as read-only backends (such as the \code{\link[=MsBackendMzR]{MsBackendMzR()}}).
+Note that for the former it is possible to apply the processing queue and
+write the modified peak data back to the data storage with the
+\code{applyProcessing} function.
 \itemize{
 \item \code{addProcessing}: adds an arbitrary function that should be applied to the
 peaks matrix of every spectrum in \code{object}. The function (can be passed
@@ -1078,8 +1096,9 @@ Prior combination of the spectra all processings queued in the lazy
 evaluation queue are applied. Be aware that calling \code{combineSpectra} on a
 \code{Spectra} object with certain backends that allow modifications might
 \strong{overwrite} the original data. This does not happen with a
-\code{MsBackendDataFrame} backend, but with a \code{MsBackendHdf5Peaks} backend the
-m/z and intensity values in the original hdf5 file(s) will be overwritten.
+\code{MsBackendMemory} or \code{MsBackendDataFrame} backend, but with a
+\code{MsBackendHdf5Peaks} backend the m/z and intensity values in the original
+hdf5 file(s) will be overwritten.
 The function returns a \code{Spectra} of length equal to the unique levels
 of \code{f}.
 \item \code{compareSpectra}: compare each spectrum in \code{x} with each spectrum in \code{y}
@@ -1094,7 +1113,10 @@ keep only matching peaks (\code{type = "inner"}); see \code{\link[=joinPeaks]{jo
 information and examples). The \code{MAPFUN} function should have parameters
 \code{x}, \code{y}, \code{xPrecursorMz} and \code{yPrecursorMz} as these values are passed to
 the function. In addition to \code{joinPeaks()} also \code{\link[=joinPeaksGnps]{joinPeaksGnps()}} is
-supported for GNPS-like similarity score calculations.
+supported for GNPS-like similarity score calculations. Note that
+\code{joinPeaksGnps} should only be used in combination with
+\code{FUN = MsCoreUtils::gnps} (see \code{\link[=joinPeaksGnps]{joinPeaksGnps()}} for more information and
+details).
 \code{FUN} is supposed to be a function to compare intensities of (matched)
 peaks of the two spectra that are compared. The function needs to take two
 matrices with columns \code{"mz"} and \code{"intensity"} as input and is supposed
@@ -1132,17 +1154,25 @@ filtering to spectra of the specified MS level(s).
 \code{\link[=neutralLoss]{neutralLoss()}} for detailed documentation.
 \item \code{processingLog}: returns a \code{character} vector with the processing log
 messages.
-\item \code{spectrapply}: apply a given function to each spectrum in a \code{Spectra}
-object. The \code{Spectra} is splitted into individual spectra and on each of
-them (i.e. \code{Spectra} of length 1) the function \code{FUN} is applied. Additional
-parameters to \code{FUN} can be passed with the \code{...} argument. Parameter
-\code{BPPARAM} allows to enable parallel processing, which however makes only
-sense if \code{FUN} is computational intense. \code{spectrapply} returns a \code{list}
-(same length than \code{object}) with the result from \code{FUN}. See examples for
-more details.
-Note that the result and its order depends on the factor \code{f} used for
-splitting \code{object} with \code{split}, i.e. no re-ordering or \code{unsplit} is
-performed on the result.
+\item \code{spectrapply}: apply a given function to each individual spectrum or sets
+of a \code{Spectra} object. By default, the \code{Spectra} is split into individual
+spectra (i.e. \code{Spectra} of length 1) and the function \code{FUN} is applied to
+each of them. An alternative splitting can be defined with parameter \code{f}.
+Parameters for \code{FUN} can be passed using \code{...}.
+The returned result and its order depend on the function \code{FUN} and how
+\code{object} is split (hence on \code{f}, if provided). Parallel processing is
+supported and can be configured with parameter \code{BPPARAM}, is however only
+suggested for computational intense \code{FUN}.
+As an alternative to the (eventual parallel) processing of the full
+\code{Spectra}, \code{spectrapply} supports also a chunk-wise processing. For this,
+parameter \code{chunkSize} needs to be specified. \code{object} is then split into
+chunks of size \code{chunkSize} which are then (stepwise) processed by \code{FUN}.
+This guarantees a lower memory demand (especially for on-disk backends)
+since only the data for one chunk needs to be loaded into memory in each
+iteration. Note that by specifying \code{chunkSize}, parameters \code{f} and
+\code{BPPARAM} will be ignored.
+See also \code{\link[=chunkapply]{chunkapply()}} or examples below for details on chunk-wise
+processing.
 \item \code{smooth}: smooth individual spectra using a moving window-based approach
 (window size = \code{2 * halfWindowSize}). Currently, the
 Moving-Average- (\code{method = "MovingAverage"}),
@@ -1209,10 +1239,18 @@ sciex <- Spectra(sciex_file, backend = MsBackendMzR())
 sciex
 
 ## The MS data is on disk and will be read into memory on-demand. We can
-## however change the backend to a MsBackendDataFrame backend which will
+## however change the backend to a MsBackendMemory backend which will
 ## keep all of the data in memory.
-sciex_im <- setBackend(sciex, MsBackendDataFrame())
+sciex_im <- setBackend(sciex, MsBackendMemory())
 sciex_im
+
+## The `MsBackendMemory()` supports the `setBackend` method:
+supportsSetBackend(MsBackendMemory())
+
+## Thus, it is possible to change to that backend with `setBackend`. Most
+## read-only backends however don't support that, such as the
+## `MsBackendMzR` and `setBackend` would fail to change to that backend.
+supportsSetBackend(MsBackendMzR())
 
 ## The on-disk object `sciex` is light-weight, because it does not keep the
 ## MS peak data in memory. The `sciex_im` object in contrast keeps all the
@@ -1438,7 +1476,7 @@ lengths(mz(data))
 ## `reset` after a `applyProcessing` can not restore the data, because the
 ## data in the backend was changed. Similarly, `reset` after any filter
 ## operations can not restore data for a `Spectra` with a
-## `MsBackendDataFrame`.
+## `MsBackendMemory` or `MsBackendDataFrame`.
 res_2 <- applyProcessing(res)
 res_rest <- reset(res_2)
 lengths(mz(res))
@@ -1482,6 +1520,14 @@ head(res)
 ## data (such as `intensity`) are much more efficient than using `lapply`:
 res <- lapply(intensity(sciex_im[1:20]), mean)
 head(res)
+
+## As an alternative, applying a function `FUN` to a `Spectra` can be
+## performed *chunk-wise*. The advantage of this is, that only the data for
+## one chunk at a time needs to be loaded into memory reducing the memory
+## demand. This type of processing can be performed by specifying the size
+## of the chunks (i.e. number of spectra per chunk) with the `chunkSize`
+## parameter
+spectrapply(sciex_im[1:20], lengths, chunkSize = 5L)
 
 ## Calculating the precursor intensity for MS2 spectra:
 ##

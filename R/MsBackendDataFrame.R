@@ -58,14 +58,14 @@ setMethod("backendInitialize", signature = "MsBackendDataFrame",
                   data <- DataFrame(data)
               if (!is(data, "DataFrame"))
                   stop("'data' has to be a 'DataFrame'")
-              if (!nrow(data))
-                  return(object)
-              data$dataStorage <- "<memory>"
-              if (nrow(data) && !is(data$mz, "NumericList"))
-                  data$mz <- NumericList(data$mz, compress = FALSE)
-              if (nrow(data) && !is(data$intensity, "NumericList"))
-                  data$intensity <- NumericList(data$intensity,
-                                                compress = FALSE)
+              if (nrow(data)) {
+                  data$dataStorage <- "<memory>"
+                  if (nrow(data) && !is(data$mz, "NumericList"))
+                      data$mz <- NumericList(data$mz, compress = FALSE)
+                  if (nrow(data) && !is(data$intensity, "NumericList"))
+                      data$intensity <- NumericList(data$intensity,
+                                                    compress = FALSE)
+              }
               object@spectraData <- data
               validObject(object)
               object
@@ -188,12 +188,6 @@ setReplaceMethod("intensity", "MsBackendDataFrame", function(object, value) {
     object@spectraData$intensity <- value
     validObject(object)
     object
-})
-
-#' @rdname hidden_aliases
-#' @importFrom MsCoreUtils vapply1d
-setMethod("ionCount", "MsBackendDataFrame", function(object) {
-    vapply1d(intensity(object), sum, na.rm = TRUE)
 })
 
 #' @rdname hidden_aliases

@@ -277,7 +277,7 @@ test_that(".combine_spectra works", {
     res <- .combine_spectra(sps, tolerance = 0.1, FUN = combinePeaks)
     expect_true(length(res) == 2)
     expect_true(is(res, "Spectra"))
-    expect_true(class(res@backend) == "MsBackendDataFrame")
+    expect_true(class(res@backend) == "MsBackendMemory")
     expect_true(length(unlist(res$mz)) < length(unlist(sps$mz)))
 })
 
@@ -295,7 +295,7 @@ test_that("combineSpectra works", {
 
     expect_true(is(res, "Spectra"))
     expect_true(length(res) == 2)
-    expect_true(class(res@backend) == "MsBackendDataFrame")
+    expect_true(class(res@backend) == "MsBackendMemory")
     expect_equal(res$dataOrigin, unique(sps$dataStorage))
 
     ## Different f
@@ -434,6 +434,67 @@ test_that("joinSpectraData works", {
     expect_identical(c(spectraVariables(ms), "X", "Y", "msLevel.y"),
                      spectraVariables(ms3))
     ## Check classes after merging
+    spd2$NumList <- List(mapply(rep, 1.0, 1:10))
+    spd2$IntList <- List(mapply(rep, 1L, 1:10))
+    spd2$CharList <- List(mapply(rep, "a", 1:10))
+    ms2 <- joinSpectraData(ms, spd2)
+    expect_true(is(ms2$X, "integer"))
+    expect_true(is(ms2$Y, "character"))
+    expect_true(is(ms2$NumList, "NumericList"))
+    expect_true(is(ms2$IntList, "IntegerList"))
+    expect_true(is(ms2$CharList, "CharacterList"))
+
+    ## With MsBackendMemory
+    ms <- Spectra(msdata::proteomics(pattern = "TMT10", full.names = TRUE))
+    ms <- setBackend(ms, MsBackendMemory(), BPPARAM = SerialParam())
+    k <- sample(length(ms), 10)
+    spd2 <- spd1 <- DataFrame(id = ms$spectrumId[k],
+                              X = 1:10,
+                              Y = letters[1:10])
+    ## Input errors
+    expect_error(joinSpectraData(ms, spd2, by.x = 1:2),
+                 "'by.x' and 'by.y' must be of length 1.")
+    expect_error(joinSpectraData(ms, spd2, by.y = 1:2),
+                 "'by.x' and 'by.y' must be of length 1.")
+    expect_error(joinSpectraData(ms, spd2, by.x = 1),
+                 "'by.x' and 'by.y' must be characters.")
+    expect_error(joinSpectraData(ms, spd2, by.y = 1),
+                 "'by.x' and 'by.y' must be characters.")
+    expect_error(joinSpectraData(ms, spd2, by.x = "id"),
+                 "'by.x' not found in spectra variables.")
+    ## Works with by.y provided
+    ms1 <- joinSpectraData(ms, spd1, by.y = "id")
+    ## Error with wrong by.y
+    expect_error(joinSpectraData(ms, spd2),
+                 "'by.y' not found.")
+    names(spd2)[1] <- "spectrumId"
+    ## Works with default by.y
+    ms2 <- joinSpectraData(ms, spd2)
+    ## Expected results
+    expect_identical(spectraData(ms1[k]),
+                     spectraData(ms2[k]))
+    expect_identical(c(spectraVariables(ms), "X", "Y"),
+                     spectraVariables(ms1))
+    expect_identical(spectraData(ms1)$X[k], spd1$X)
+    expect_identical(spectraData(ms1)$Y[k], spd1$Y)
+    ## Test suffix.y
+    spd2$msLevel <- 2
+    ms3 <- joinSpectraData(ms, spd2)
+    expect_identical(c(spectraVariables(ms), "X", "Y", "msLevel.y"),
+                     spectraVariables(ms3))
+    ## Use S3 instead of S4 objects here.
+    spd2$num_list <- mapply(rep, 1.0, 1:10)
+    spd2$int_list <- mapply(rep, 1L, 1:10)
+    spd2$char_list <- mapply(rep, "a", 1:10)
+
+    ms2 <- joinSpectraData(ms, spd2)
+    expect_true(is(ms2$X, "integer"))
+    expect_true(is(ms2$Y, "character"))
+    expect_true(is.list(ms2$num_list))
+    expect_true(is.list(ms2$int_list))
+    expect_true(is.list(ms2$char_list))
+
+    ## Same with S4 objects
     spd2$NumList <- List(mapply(rep, 1.0, 1:10))
     spd2$IntList <- List(mapply(rep, 1L, 1:10))
     spd2$CharList <- List(mapply(rep, "a", 1:10))
@@ -614,4 +675,27 @@ test_that("estimatePrecursorIntensity works", {
     res_second <- estimatePrecursorIntensity(second)
     res_both <- estimatePrecursorIntensity(both)
     expect_equal(res_second, res_both[510:length(res_both)])
+})
+
+test_that(".chunk_factor works", {
+    res <- .chunk_factor(10, chunkSize = 3)
+    expect_equal(res, as.factor(c(1, 1, 1, 2, 2, 2, 3, 3, 3, 4)))
+    res <- .chunk_factor(10)
+    expect_equal(res, as.factor(rep(1L, 10)))
+})
+
+test_that("chunkapply works", {
+    smem <- setBackend(Spectra(sciex_mzr), MsBackendMemory())
+    res <- chunkapply(smem, lengths, chunkSize = 10)
+    expect_equal(res, lengths(smem))
+    a <- smem[1:10]
+    chnks <- as.factor(c(1, 1, 1, 2, 2, 2, 3, 3))
+    expect_error(chunkapply(a, lengths, chunks = chnks), "does not match")
+    chnks <- as.factor(c(1, 1, 1, 2, 2, 2, 3, 3, 3, 4))
+    res <- chunkapply(a, lengths, chunks = chnks)
+    expect_equal(res, lengths(a))
+
+    chnks <- as.factor(c(2, 2, 2, 1, 1, 1, 4, 3, 3, 3))
+    res2 <- chunkapply(a, lengths, chunks = chnks)
+    expect_equal(res2, res)
 })

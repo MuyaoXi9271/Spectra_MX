@@ -1,11 +1,13 @@
 test_that("Spectra,ANY works", {
     df <- DataFrame()
     res <- Spectra(df)
+    expect_s4_class(res@backend, "MsBackendMemory")
     expect_true(validObject(res))
     expect_true(length(res) == 0)
 
     df <- DataFrame(msLevel = c(1L, 2L))
     res <- Spectra(df)
+    expect_s4_class(res@backend, "MsBackendMemory")
     expect_identical(msLevel(res), c(1L, 2L))
     expect_true(length(res) == 2)
 
@@ -47,6 +49,17 @@ test_that("Spectra,character works", {
     expect_identical(rtime(res), rtime(res_2))
 
     show(res)
+
+    ## Empty character
+    res <- Spectra(character(), backend = MsBackendMzR())
+    expect_s4_class(res, "Spectra")
+    expect_s4_class(res@backend, "MsBackendMzR")
+    expect_true(length(res) == 0)
+
+    res <- Spectra(character(), backend = MsBackendDataFrame())
+    expect_s4_class(res, "Spectra")
+    expect_s4_class(res@backend, "MsBackendDataFrame")
+    expect_true(length(res) == 0)
 })
 
 test_that("setBackend,Spectra works", {
@@ -59,7 +72,18 @@ test_that("setBackend,Spectra works", {
                      res@backend@spectraData$fact)
     expect_identical(rtime(res), rtime(sps))
     expect_identical(dataStorage(res), dataStorage(sps))
-    expect_identical(dataOrigin(res), dataStorage(sps))
+    expect_identical(dataOrigin(res), dataOrigin(sps))
+
+    ## Empty backends
+    e <- sps[integer()]
+    e2 <- setBackend(e, MsBackendDataFrame())
+    expect_true(length(e2) == 0)
+    expect_s4_class(e2@backend, "MsBackendDataFrame")
+    expect_equal(e2$mz, IRanges::NumericList(compress = FALSE))
+    e3 <- setBackend(e, MsBackendMemory())
+    expect_true(length(e3) == 0)
+    expect_s4_class(e3@backend, "MsBackendMemory")
+    expect_equal(e3$mz, IRanges::NumericList(compress = FALSE))
 
     ## Use a different factor.
     res <- setBackend(sps, MsBackendDataFrame(), f = df$fact)
@@ -95,7 +119,7 @@ test_that("setBackend,Spectra works", {
     expect_identical(peaksData(sps), peaksData(res))
 
     ## errors:
-    expect_error(setBackend(sps, MsBackendMzR()), "is read-only")
+    expect_error(setBackend(sps, MsBackendMzR()), "support")
     expect_error(setBackend(sps, MsBackendMzR()), "MsBackendMzR")
 })
 
@@ -685,15 +709,15 @@ test_that("spectraData<-,Spectra works", {
 
 test_that("spectraNames,spectraNames<-,Spectra works", {
     sps <- Spectra()
-    expect_identical(spectraNames(sps), NULL)
+    expect_true(length(spectraNames(sps)) == 0)
 
     sps <- Spectra(DataFrame(msLevel = c(1L, 1L)))
-    expect_identical(spectraNames(sps), NULL)
+    expect_identical(spectraNames(sps), as.character(1:2))
 
     spectraNames(sps) <- c("a", "b")
     expect_identical(spectraNames(sps), c("a", "b"))
 
-    expect_error(spectraNames(sps) <- 1, "invalid rownames length")
+    expect_error(spectraNames(sps) <- 1, "invalid")
 })
 
 test_that("spectraVariables,Spectra works", {
@@ -1316,6 +1340,10 @@ test_that("spectrapply,Spectra works", {
     res <- spectrapply(sps, FUN = function(x) mean(x$intensity[[1]]))
     expect_equal(unlist(res, use.names = FALSE),
                  vapply(intensity(sps), mean, numeric(1)))
+
+    ## chunkify
+    res <- spectrapply(Spectra(sciex_mzr), lengths, chunkSize = 100)
+    expect_equal(res, lengths(sciex_pks) / 2)
 })
 
 test_that("split,Spectra works", {
@@ -1413,7 +1441,7 @@ test_that("filterMzRange,Spectra works", {
     expect_warning(res <- filterMzRange(sps, msLevel = 1L), "not available")
     expect_equal(mz(res), mz(sps))
 
-    expect_warning(res <- filterMzRange(sps), "Inf")
+    res <- filterMzRange(sps)
     expect_equal(mz(res), mz(sps))
 
     res <- filterMzRange(sps, mz = c(200, 400))

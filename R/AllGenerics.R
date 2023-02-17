@@ -2,9 +2,6 @@
 NULL
 
 #' @rdname hidden_aliases
-setGeneric("addProcessing", function(object, ...)
-    standardGeneric("addProcessing"))
-#' @rdname hidden_aliases
 setGeneric("backendInitialize", def = function(object, ...)
     standardGeneric("backendInitialize"),
     valueClass = "MsBackend")
@@ -105,3 +102,6 @@ setGeneric("spectraVariableMapping", function(object, ...)
 
 setGeneric("uniqueMsLevels", function(object, ...)
     standardGeneric("uniqueMsLevels"))
+
+setGeneric("supportsSetBackend", function(object, ...)
+    standardGeneric("supportsSetBackend"))
