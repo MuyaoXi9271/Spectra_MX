@@ -119,11 +119,13 @@ NULL
 #' @description
 #'
 #' Filter the spectrum keeping only peaks that match the provided m/z value(s).
+#' Note that **all** peaks in `x` matching any of the m/z values in `mz` will
+#' be considered.
 #'
 #' @inheritParams .peaks_remove
 #'
 #' @param mz `numeric` with the m/z values to match against. This needs to be
-#'     a sorted `numeric` (has to be checked upstream).
+#'     a sorted `numeric` (**has to be checked upstream**).
 #'
 #' @param tolerance `numeric` with the tolerance. Can be of length 1 or equal
 #'     length `mz`.
@@ -144,16 +146,10 @@ NULL
                                    keep = TRUE, ...) {
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
-    idx <- closest(mz, x[, "mz"], tolerance = tolerance, ppm = ppm,
-                   duplicates = "closest", .check = FALSE)
-    idx <- idx[!is.na(idx)]
-    if (keep)
-        x[idx, , drop = FALSE]
-    else {
-        if (length(idx))
-            x[-idx, , drop = FALSE]
-        else x
-    }
+    no_match <- is.na(closest(x[, "mz"], mz, tolerance = tolerance, ppm = ppm,
+                              duplicates = "keep", .check = FALSE))
+    if (keep) x[!no_match, , drop = FALSE]
+    else x[no_match, , drop = FALSE]
 }
 
 #' @description
@@ -169,10 +165,13 @@ NULL
 #'
 #' @noRd
 .peaks_filter_mz_range <- function(x, spectrumMsLevel, mz = numeric(),
-                                   msLevel = spectrumMsLevel, ...) {
+                                   msLevel = spectrumMsLevel, keep = TRUE,
+                                   ...) {
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
-    x[between(x[, "mz"], mz), , drop = FALSE]
+    if (keep)
+        x[between(x[, "mz"], mz), , drop = FALSE]
+    else x[!between(x[, "mz"], mz), , drop = FALSE]
 }
 
 #' @description
@@ -237,7 +236,7 @@ NULL
 #'   between `x` and `y` are returned by `type = "inner"`, i.e. only
 #'   peaks present in both spectra are reported.
 #'
-#' - `joinPeaksGnps` matches/maps peaks between spectra with the same approach
+#' - `joinPeaksGnps`: matches/maps peaks between spectra with the same approach
 #'   used in GNPS: peaks are considered matching if a) the
 #'   difference in their m/z values is smaller than defined by `tolerance`
 #'   and `ppm` (this is the same as `joinPeaks`) **and** b) the difference of
@@ -250,6 +249,12 @@ NULL
 #'   scores, [gnps()] should be called on the aligned peak matrices (i.e.
 #'   `compareSpectra` should be called with `MAPFUN = joinPeaksGnps` and
 #'   `FUN = MsCoreUtils::gnps`).
+#'
+#' - `joinPeaksNone`: does not perform any peak matching but simply returns
+#'   the peak matrices in a `list`. This function should be used with the
+#'   `MAPFUN` parameter of [compareSpectra()] if the spectra similarity
+#'   function used (parameter `FUN` of `compareSpectra`) performs its own
+#'   peak matching and does hence not expect matched peak matrices as an input.
 #'
 #' @section Implementation notes:
 #'
@@ -364,6 +369,13 @@ joinPeaksGnps <- function(x, y, xPrecursorMz = NA_real_,
     list(x = x[map[[1L]], , drop = FALSE], y = y[map[[2L]], , drop = FALSE])
 }
 
+#' @export
+#'
+#' @rdname joinPeaks
+joinPeaksNone <- function(x, y, ...) {
+    list(x = x, y = y)
+}
+
 #' @importFrom MsCoreUtils localMaxima noise refineCentroids
 #'
 #' @description
@@ -468,7 +480,7 @@ joinPeaksGnps <- function(x, y, xPrecursorMz = NA_real_,
                                        threshold = 0.2,
                                        keepIsotopes = TRUE,
                                        maxCharge = 5,
-                                       isotopeTolerance = 0.005) {
+                                       isotopeTolerance = 0.005, ...) {
     neutron   <- 1.0033548378 # really C12, C13 difference
     iso_dist  <- neutron / seq(from = 1, by = 1, to = maxCharge)
     ## just calculate isotopes that are in the halfWindowSize
@@ -514,4 +526,139 @@ joinPeaksGnps <- function(x, y, xPrecursorMz = NA_real_,
         }
     }
     x[keep, , drop = FALSE]
+}
+
+#' Function to keep only the monoisotopic peak for groups of (potential)
+#' isotopologues. The peak with the lowest m/z is considered the monoisotopic
+#' peak for each group of isotopologues. Isotope peaks are predicted using
+#' the `MetaboCoreUtils::isotopologues` function. See tge respective
+#' documentation for more information on parameters.
+#'
+#' @importFrom MetaboCoreUtils isotopologues isotopicSubstitutionMatrix
+#'
+#' @author Nir Shahaf, Johannes Rainer
+#'
+#' @param x peak `matrix` with m/z and intensity values.
+#'
+#' @noRd
+.peaks_deisotope <-
+    function(x, substDefinition = isotopicSubstitutionMatrix("HMDB_NEUTRAL"),
+             tolerance = 0, ppm = 10, charge = 1, ...) {
+        iso_grps <- isotopologues(x, substDefinition = substDefinition,
+                                  tolerance = tolerance, ppm = ppm,
+                                  charge = charge)
+        if (length(iso_grps)) {
+            rem <- unique(unlist(lapply(iso_grps, `[`, -1), use.names = FALSE))
+            x[-rem, , drop = FALSE]
+        } else x
+}
+
+#' Function to *reduce* spectra keeping for each group of peaks with highly
+#' similar m/z values (based on provided `tolerance` and `mz` the one with
+#' the highest intensity. The *groups* of mass peaks are defined using the
+#' `MsCoreUtils::group` function.
+#'
+#' @param x peaks `matrix` with m/z and instensity values.
+#'
+#' @author Nir Shahaf, Johannes Rainer
+#'
+#' @noRd
+.peaks_reduce <- function(x, tolerance = 0, ppm = 10, ...) {
+    grps <- group(x[, "mz"], tolerance = tolerance, ppm = ppm)
+    l <- length(grps)
+    if (l == grps[l])
+        x
+    else {
+        il <- split(x[, "intensity"], as.factor(grps))
+        idx <- vapply(il, which.max, integer(1), USE.NAMES = FALSE) +
+            c(0, cumsum(lengths(il, use.names = FALSE))[-length(il)])
+        x[idx, , drop = FALSE]
+    }
+}
+
+.peaks_scale_intensities <- function(x, by = sum, spectrumMsLevel,
+                                     msLevel, ...) {
+    if (!spectrumMsLevel %in% msLevel || !nrow(x))
+        return(x)
+    ints <- x[, "intensity"]
+    x[, "intensity"] <- ints / by(ints[!is.na(ints)])
+    x
+}
+
+#' Combine peaks within each peak matrix if the difference of their m/z is
+#' smaller than `tolerance` and `ppm`. Peak grouping is performed with the
+#' `MsCoreUtils::group` function.
+#'
+#' Additional peak variables for combined peaks are dropped (replaced by `NA`)
+#' if their values differ between the combined peaks.
+#'
+#' Note that `weighted = TRUE` overrides `mzFun` using the `weighted.mean`
+#' to calculate the aggregated m/z values.
+#'
+#' @author Johannes Rainer
+#'
+#' @importFrom stats weighted.mean
+#'
+#' @noRd
+.peaks_combine <- function(x, ppm = 20, tolerance = 0,
+                           intensityFun = base::mean, mzFun = base::mean,
+                           weighted = TRUE, spectrumMsLevel,
+                           msLevel = spectrumMsLevel, ...) {
+    if (!spectrumMsLevel %in% msLevel || !length(x))
+        return(x)
+    grps <- group(x[, "mz"], tolerance = tolerance, ppm = ppm)
+    lg <- length(grps)
+    if (grps[lg] == lg)
+        return(x)
+    mzs <- split(x[, "mz"], grps)
+    ints <- split(x[, "intensity"], grps)
+    if (weighted)
+        mzs <- unlist(mapply(
+            mzs, ints, FUN = function(m, i) weighted.mean(m, i + 1),
+            SIMPLIFY = FALSE, USE.NAMES = FALSE), use.names = FALSE)
+    else mzs <- vapply1d(mzs, mzFun)
+    ints <- vapply1d(ints, intensityFun)
+    if (ncol(x) > 2) {
+        lst <- lapply(x[!colnames(x) %in% c("mz", "intensity")], function(z) {
+            z <- lapply(split(z, grps), unique)
+            z[lengths(z) > 1] <- NA
+            unlist(z, use.names = FALSE, recursive = FALSE)
+        })
+        do.call(cbind.data.frame,
+                c(list(mz = mzs, intensity = ints), lst))
+    } else
+        cbind(mz = mzs, intensity = ints)
+}
+
+#' Keeps all peaks except those matching the precursor m/z with `tolerance`
+#' and `ppm`.
+#'
+#' @author Johannes Rainer
+#'
+#' @noRd
+.peaks_filter_precursor_ne <- function(x, ppm = 20, tolerance = 0,
+                                       precursorMz, spectrumMsLevel,
+                                       msLevel = spectrumMsLevel, ...) {
+    if (!spectrumMsLevel %in% msLevel || !nrow(x))
+        return(x)
+    keep <- is.na(closest(x[, "mz"], precursorMz, ppm = ppm,
+                          tolerance = tolerance, duplicates = "keep",
+                          .check = FALSE))
+    x[keep, , drop = FALSE]
+}
+
+#' Keeps peaks with an m/z smaller than the precursor m/z. `tolerance` and
+#' `ppm` are subtracted from the precursor m/z to ensure that also the
+#' precursor m/z is removed.
+#'
+#' @author Johannes Rainer
+#'
+#' @noRd
+.peaks_filter_precursor_keep_below <- function(x, ppm = 20, tolerance = 0,
+                                               precursorMz, spectrumMsLevel,
+                                               msLevel = spectrumMsLevel, ...) {
+    if (!spectrumMsLevel %in% msLevel || !nrow(x))
+        return(x)
+    pmz <- precursorMz - tolerance - ppm(precursorMz, ppm = ppm)
+    x[x[, "mz"] < pmz, , drop = FALSE]
 }

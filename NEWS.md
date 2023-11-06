@@ -1,4 +1,110 @@
+# Spectra 1.11
+
+## Changes in 1.11.11
+
+- Fix issue with `filterFourierTransformArtefacts` function (see [issue
+  #302](https://github.com/rformassspectrometry/Spectra/issues/302)). Thanks
+  Adriano Rutz for reporting.
+
+## Changes in 1.11.10
+
+- `peaksData,MsBackendMemory` returns a `data.frame` if additional peak
+  variables (in addition to `"mz"` and `"intensity"`) are requested. For
+  `columns = c("mz", "intensity")` (the default) a `list` of `matrix` is
+  returned.
+- `peaksData,Spectra` returns either a `matrix` or `data.frame` and ensures
+  the peak data is correctly subset based on the lazy evaluation processing
+  queue.
+- `$,Spectra` to access peak variables ensures the lazy evaluation queue is
+  applied prior to extracting the values.
+- `applyProcessing` correctly subsets and processes all peak variables
+  depending on the processing queue.
+- `spectraData<-,Spectra` throws an error if processing queue is not empty and
+  values for peaks variables should be replaced.
+- `$<-,Spectra` throws an error if processing queue is not empty and a peaks
+  variable is going to be replaced.
+- Add full support for additional peaks variables to `MsBackendDataFrame`.
+
+## Changes in 1.11.9
+
+- Add `filterPrecursorPeaks` to allow filtering peaks within each spectrum
+  with m/z values relative to the precursor m/z of the spectrum.
+
+## Changes in 1.11.8
+
+- Add an example to the vignette describing how spectral similarity scores from
+  the *msentropy* package can be used with `compareSpectra`.
+
+## Changes in 1.11.7
+
+- Fix in `compareSpectra` to also pass parameters `ppm` and `tolerance` to
+  the peak similarity calculation functions `FUN`: this allows to use custom
+  similarity function with integrated mapping of peaks.
+- Add `joinPeaksNone` to skip the peak matching in `compareSpectra` if the
+  similarity scoring function performs its own peak matching.
+- Only use parallel processing in `setBackend,Spectra` if both backends support
+  it.
+
+## Changes in 1.11.6
+
+- Add `filterPrecursorMaxIntensity` function.
+- Add `filterPrecursorIsotopes` function.
+
+## Changes in 1.11.5
+
+- Add `scalePeaks` function (see [issue
+  #291](https://github.com/rformassspectrometry/Spectra/issues/291)).
+
+## Changes in 1.11.4
+
+- Import `uniqueMsLevels` from `ProtGenerics`.
+
+## Changes in 1.11.3
+
+- Rename `combinePeaks` for lists of peak matrices into `combinePeaksData`.
+- Add `combinePeaks` generics.
+- Add `combinePeaks,Spectra` to combine peaks within each spectrum in a
+  `Spectra`.
+
+## Changes in 1.11.2
+
+- Add `deisotopeSpectra` and `reduceSpectra` functions.
+
+## Changes in 1.11.1
+
+- Add example for filtering precursor m/z peaks from fragment spectra to the
+  vignette.
+
 # Spectra 1.9
+
+## Changes in 1.9.15
+
+- Fix issue in `MsBackendMemory` failed to return intensity or m/z values when
+  peaks data is empty.
+- Fix bug in `filterPrecursorScan()` (see #194 and PR #277).
+
+## Changes in 1.9.14
+
+- Fix issue with `filterMzValues` that would only keep (or remove) the first
+  matching peak instead of all matching peaks (given `ppm` and `tolerance`).
+  Issue [#274](https://github.com/rformassspectrometry/Spectra/issues/274).
+- Add parameter `keep` to `filterMzRange` to support keeping or removing
+  matching peaks.
+
+## Changes in 1.9.13
+
+- Add the `backendBpparam` method that allows to evaluate whether a `MsBackend`
+  supports the provided (or the default) `BiocParallel`-based parallel
+  processing setup.
+- Minor tweaks in the internal `.peaksapply` function to avoid splitting/merging
+  of data if not needed (e.g. if no parallel processing is performed).
+- Minor tweaks in spectra comparison functions to avoid repeated calling of
+  functions in loops.
+
+## Changes in 1.9.12
+
+- Extend the list of available `MsBackend` backends provided by other packages
+  (in the README and in the package vignette).
 
 ## Changes in 1.9.11
 

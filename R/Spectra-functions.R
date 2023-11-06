@@ -77,7 +77,8 @@ NULL
 #' @param ... optional additional arguments to `FUN`.
 #'
 #' @param f `factor` or `vector` that can be coerced to one defining how the
-#'     data should be split for parallel processing.
+#'     data should be split for parallel processing. Set to `NULL` to disable
+#'     parallel processing.
 #'
 #' @param columns `character` defining the columns that should be returned. This
 #'     will be passed to the backend's `peaksData` function.
@@ -96,24 +97,41 @@ NULL
                         f = dataStorage(object),
                         columns = c("mz", "intensity"), BPPARAM = bpparam()) {
     len <- length(object)
+    lf <- length(f)
     if (!len)
         return(list())
-    if (length(f) != len)
+    if (lf && lf != len)
         stop("Length of 'f' has to match 'length(object)' (", len, ")")
     if (!is.factor(f))
         f <- factor(f)
     pqueue <- object@processingQueue
     if (!is.null(FUN))
         pqueue <- c(pqueue, ProcessingStep(FUN, ARGS = list(...)))
-    if (length(levels(f)) > 1 || length(pqueue)) {
-        res <- bplapply(split(object@backend, f), function(z, queue, svars) {
+    ll <- length(levels(f))
+    if (length(pqueue) || ll > 1) {
+        if (!all(c("mz", "intensity") %in% columns)) {
+            scols <- columns
+            columns <- union(c("mz", "intensity"), columns)
+            pqueue <- c(
+                pqueue, ProcessingStep(
+                            FUN = function(x, scols, ...) {
+                                x[, scols, drop = FALSE]
+                            }, ARGS = list(scols = scols)))
+        }
+        .local <- function(z, queue, svars) {
             if (length(svars))
                 spd <- as.data.frame(spectraData(z, columns = svars))
             else spd <- NULL
             .apply_processing_queue(peaksData(z, columns = columns), spd,
                                     queue = queue)
-        }, queue = pqueue, svars = spectraVariables, BPPARAM = BPPARAM)
-        unsplit(res, f = f, drop = TRUE)
+        }
+        if (ll > 1) {
+            res <- bplapply(split(object@backend, f), .local,
+                            queue = pqueue, svars = spectraVariables,
+                            BPPARAM = BPPARAM)
+            unsplit(res, f = f, drop = TRUE)
+        } else
+            .local(object@backend, pqueue, spectraVariables)
     } else peaksData(object@backend, columns = columns)
 }
 
@@ -168,19 +186,24 @@ applyProcessing <- function(object, f = dataStorage(object),
     if (isReadOnly(object@backend))
         stop(class(object@backend), " is read-only. 'applyProcessing' works ",
              "only with backends that support writing data.")
+    BPPARAM <- backendBpparam(object@backend, BPPARAM)
     if (!is.factor(f))
         f <- factor(f, levels = unique(f))
     if (length(f) != length(object))
         stop("length 'f' has to be equal to the length of 'object' (",
              length(object), ")")
-    bknds <- bplapply(split(object@backend, f = f), function(z, queue, svars) {
-        if (length(svars))
-            spd <- as.data.frame(spectraData(z, columns = svars))
-        else spd <- NULL
-        peaksData(z) <- .apply_processing_queue(peaksData(z), spd, queue)
-        z
-    }, queue = object@processingQueue,
-    svars = .processingQueueVariables(object), BPPARAM = BPPARAM)
+    pv <- peaksVariables(object)
+    bknds <- bplapply(
+        split(object@backend, f = f), function(z, queue, pv, svars) {
+            if (length(svars))
+                spd <- as.data.frame(spectraData(z, columns = svars))
+            else spd <- NULL
+            peaksData(z) <- .apply_processing_queue(
+                peaksData(z, columns = pv), spd, queue)
+            z
+        }, queue = object@processingQueue, pv = pv,
+        svars = .processingQueueVariables(object),
+        BPPARAM = BPPARAM)
     bknds <- backendMerge(bknds)
     if (is.unsorted(f))
         bknds <- bknds[order(unlist(split(seq_along(bknds), f),
@@ -209,7 +232,7 @@ applyProcessing <- function(object, f = dataStorage(object),
         return(TRUE)
     if (!is.numeric(msLevel))
         stop("'msLevel' must be numeric")
-    if (!any(msLevel(object) %in% msLevel)) {
+    if (!any(uniqueMsLevels(object) %in% msLevel)) {
         warning("Specified MS levels ", paste0(msLevel, collapse = ","),
                 " not available in 'object'")
         FALSE
@@ -280,14 +303,27 @@ applyProcessing <- function(object, f = dataStorage(object),
 .compare_spectra_chunk <- function(x, y = NULL, MAPFUN = joinPeaks,
                                    tolerance = 0, ppm = 20,
                                    FUN = ndotproduct,
-                                   chunkSize = 10000, ...) {
+                                   chunkSize = 10000, ...,
+                                   BPPARAM = bpparam()) {
     nx <- length(x)
     ny <- length(y)
+    bppx <- backendBpparam(x@backend, BPPARAM)
+    if (is(bppx, "SerialParam"))
+        fx <- NULL
+    else fx <- factor(dataStorage(x))
+    pqvx <- .processingQueueVariables(x)
+    bppy <- backendBpparam(y@backend, BPPARAM)
+    if (is(bppy, "SerialParam"))
+        fy <- NULL
+    else fy <- factor(dataStorage(y))
+    pqvy <- .processingQueueVariables(y)
     if (nx <= chunkSize && ny <= chunkSize) {
-        mat <- .peaks_compare(.peaksapply(x), .peaksapply(y), MAPFUN = MAPFUN,
-                              tolerance = tolerance, ppm = ppm,
-                              FUN = FUN, xPrecursorMz = precursorMz(x),
-                              yPrecursorMz = precursorMz(y), ...)
+        mat <- .peaks_compare(
+            .peaksapply(x, f = fx, spectraVariables = pqvx, BPPARAM = bppx),
+            .peaksapply(y, f = fy, spectraVariables = pqvy, BPPARAM = bppy),
+            MAPFUN = MAPFUN, tolerance = tolerance, ppm = ppm,
+            FUN = FUN, xPrecursorMz = precursorMz(x),
+            yPrecursorMz = precursorMz(y), ...)
         dimnames(mat) <- list(spectraNames(x), spectraNames(y))
         return(mat)
     }
@@ -304,11 +340,19 @@ applyProcessing <- function(object, f = dataStorage(object),
                   dimnames = list(spectraNames(x), spectraNames(y)))
     for (x_chunk in x_chunks) {
         x_buff <- x[x_chunk]
-        x_peaks <- .peaksapply(x_buff)
+        if (length(fx))
+            fxc <- factor(dataStorage(x_buff))
+        else fxc <- NULL
+        x_peaks <- .peaksapply(x_buff, f = fxc, spectraVariables = pqvx,
+                               BPPARAM = bppx)
         for (y_chunk in y_chunks) {
             y_buff <- y[y_chunk]
+            if (length(fy))
+                fyc <- factor(dataStorage(y_buff))
+            else fyc <- NULL
             mat[x_chunk, y_chunk] <- .peaks_compare(
-                x_peaks, .peaksapply(y_buff),
+                x_peaks, .peaksapply(y_buff, f = fyc, spectraVariables = pqvy,
+                                     BPPARAM = bppy),
                 MAPFUN = MAPFUN, tolerance = tolerance, ppm = ppm,
                 FUN = FUN, xPrecursorMz = precursorMz(x_buff),
                 yPrecursorMz = precursorMz(y_buff), ...)
@@ -341,15 +385,19 @@ applyProcessing <- function(object, f = dataStorage(object),
     m <- matrix(NA_real_, nrow = nx, ncol = nx,
                   dimnames = list(spectraNames(x), spectraNames(x)))
 
+    sv <- .processingQueueVariables(x)
     cb <- which(lower.tri(m, diag = TRUE), arr.ind = TRUE)
     pmz <- precursorMz(x)
+    bpp <- SerialParam()
     for (i in seq_len(nrow(cb))) {
         cur <- cb[i, 2L]
         if (i == 1L || cb[i - 1L, 2L] != cur) {
-            py <- px <- peaksData(x[cur])[[1L]]
+            py <- px <- .peaksapply(x[cur], spectraVariables = sv, f = NULL,
+                                    BPPARAM = bpp)[[1L]]
             pmzx <- pmzy <- pmz[cur]
         } else {
-            py <- peaksData(x[cb[i, 1L]])[[1L]]
+            py <- .peaksapply(x[cb[i, 1L]], spectraVariables = sv, f = NULL,
+                              BPPARAM = bpp)[[1L]]
             pmzy <- pmz[cb[i, 1L]]
         }
         map <- MAPFUN(px, py, tolerance = tolerance, ppm = ppm,
@@ -357,7 +405,7 @@ applyProcessing <- function(object, f = dataStorage(object),
                       .check = FALSE,...)
         m[cb[i, 1L], cur] <- m[cur, cb[i, 1L]] <-
             FUN(map[[1L]], map[[2L]], xPrecursorMz = pmzx,
-                yPrecursorMz = pmzy, ...)
+                yPrecursorMz = pmzy, ppm = ppm, tolerance = tolerance, ...)
     }
     m
 }
@@ -399,18 +447,20 @@ applyProcessing <- function(object, f = dataStorage(object),
 #' res$mz
 #' res$intensity
 #'
-#' res <- .combine_spectra(sps, FUN = combinePeaks, tolerance = 0.1)
+#' res <- .combine_spectra(sps, FUN = combinePeaksData, tolerance = 0.1)
 #' res$mz
 #' res$intensity
-.combine_spectra <- function(x, f = x$dataStorage, FUN = combinePeaks, ...) {
+.combine_spectra <- function(x, f = x$dataStorage,
+                             FUN = combinePeaksData, ...) {
     if (!is.factor(f))
         f <- factor(f)
     else f <- droplevels(f)
     x_new <- x[match(levels(f), f)]
     if (isReadOnly(x_new@backend))
         x_new <- setBackend(x_new, MsBackendMemory())
+    bpp <- SerialParam()
     peaksData(x_new@backend) <- lapply(
-        split(.peaksapply(x, BPPARAM = SerialParam()), f = f), FUN = FUN, ...)
+        split(.peaksapply(x, f = NULL, BPPARAM = bpp), f = f), FUN = FUN, ...)
     x_new@processingQueue <- list()
     validObject(x_new)
     x_new
@@ -459,11 +509,12 @@ concatenateSpectra <- function(x, ...) {
 #'
 #' @rdname Spectra
 combineSpectra <- function(x, f = x$dataStorage, p = x$dataStorage,
-                           FUN = combinePeaks, ..., BPPARAM = bpparam()) {
+                           FUN = combinePeaksData, ..., BPPARAM = bpparam()) {
     if (!is.factor(f))
         f <- factor(f, levels = unique(f))
     if (!is.factor(p))
         p <- factor(p, levels = unique(p))
+    BPPARAM <- backendBpparam(x@backend, BPPARAM)
     if (length(f) != length(x) || length(p) != length(x))
         stop("length of 'f' and 'p' have to match length of 'x'")
     if (isReadOnly(x@backend))
@@ -601,16 +652,76 @@ processingLog <- function(x) {
     x@processing
 }
 
+#' @title Estimate Precursor Intensities
+#'
+#' @description
+#' Some MS instrument manufacturers don't provide precursor intensities for
+#' fragment spectra. These can however be estimated, given that also MS1
+#' spectra are available. The `estimatePrecursorIntensity` defines the
+#' precursor intensities for MS2 spectra using the intensity of the matching
+#' MS1 peak from the closest MS1 spectrum (i.e. the last MS1 spectrum measured
+#' before the respective MS2 spectrum). With `method = "interpolation"` it is
+#' also possible to calculate the precursor intensity based on an interpolation
+#' of intensity values (and retention times) of the matching MS1 peaks from the
+#' previous and next MS1 spectrum. See below for an example.
+#'
+#' @param x `Spectra` with MS1 and MS2 spectra.
+#'
+#' @param ppm `numeric(1)` with the maximal allowed relative difference of m/z
+#'     values between the precursor m/z of a spectrum and the m/z of the
+#'     respective ion on the MS1 scan.
+#'
+#' @param tolerance `numeric(1)` with the maximal allowed difference of m/z
+#'     values between the precursor m/z of a spectrum and the m/z of the
+#'     respective ion on the MS1 scan.
+#'
+#' @param method `character(1)` defining whether the precursor intensity
+#'     should be estimated on the previous MS1 spectrum (`method = "previous"`,
+#'     the default) or based on an interpolation on the previous and next
+#'     MS1 spectrum (`method = "interpolation"`).
+#'
+#' @param msLevel. `integer(1)` the MS level for which precursor intensities
+#'     should be estimated. Defaults to `2L`.
+#'
+#' @param f `factor` (or vector to be coerced to `factor`) defining which
+#'     spectra belong to the same original data file (sample).
+#'     Defaults to `f = dataOrigin(x)`.
+#'
+#' @param BPPARAM Parallel setup configuration. See [bpparam()] for more
+#'     information. This is passed directly to the [backendInitialize()] method
+#'     of the [MsBackend-class].
+#'
+#' @author Johannes Rainer with feedback and suggestions from Corey Broeckling
+#'
 #' @export
 #'
-#' @rdname Spectra
-estimatePrecursorIntensity <- function(x, ppm = 10, tolerance = 0,
+#' @rdname estimatePrecursorIntensity
+#'
+#' @examples
+#'
+#' #' ## Calculating the precursor intensity for MS2 spectra:
+#' ##
+#' ## Some MS instrument manufacturer don't report the precursor intensities
+#' ## for MS2 spectra. The `estimatePrecursorIntensity` function can be used
+#' ## in these cases to calculate the precursor intensity on MS1 data. Below
+#' ## we load an mzML file from a vendor providing precursor intensities and
+#' ## compare the estimated and reported precursor intensities.
+#' tmt <- Spectra(msdata::proteomics(full.names = TRUE)[5],
+#'     backend = MsBackendMzR())
+#' pmi <- estimatePrecursorIntensity(tmt)
+#' plot(pmi, precursorIntensity(tmt))
+#'
+#' ## We can also replace the original precursor intensity values with the
+#' ## newly calculated ones
+#' tmt$precursorIntensity <- pmi
+estimatePrecursorIntensity <- function(x, ppm = 20, tolerance = 0,
                                        method = c("previous", "interpolation"),
                                        msLevel. = 2L, f = dataOrigin(x),
                                        BPPARAM = bpparam()) {
     if (is.factor(f))
         f <- as.character(f)
     f <- factor(f, levels = unique(f))
+    BPPARAM <- backendBpparam(x@backend, BPPARAM)
     unlist(bplapply(split(x, f), FUN = .estimate_precursor_intensity, ppm = ppm,
                     tolerance = tolerance, method = method, msLevel = msLevel.,
                     BPPARAM = BPPARAM), use.names = FALSE)
@@ -624,7 +735,7 @@ estimatePrecursorIntensity <- function(x, ppm = 10, tolerance = 0,
 #' @importFrom stats approx
 #'
 #' @noRd
-.estimate_precursor_intensity <- function(x, ppm = 10, tolerance = 0,
+.estimate_precursor_intensity <- function(x, ppm = 20, tolerance = 0,
                                           method = c("previous",
                                                      "interpolation"),
                                           msLevel = 2L) {
@@ -642,7 +753,7 @@ estimatePrecursorIntensity <- function(x, ppm = 10, tolerance = 0,
     pmi <- rep(NA_real_, length(pmz))
     idx_ms2 <- which(!is.na(pmz) & msLevel(x) == msLevel)
     x_ms1 <- filterMsLevel(x, msLevel = msLevel - 1L)
-    pks <- .peaksapply(x_ms1)
+    pks <- .peaksapply(x_ms1, f = NULL, BPPARAM = SerialParam())
     for (i in idx_ms2) {
         rt_i <- rtime(x[i])
         before_idx <- which(rtime(x_ms1) < rt_i)
@@ -755,4 +866,145 @@ chunkapply <- function(x, FUN, ..., chunkSize = 1000L, chunks = factor()) {
     if (len <= chunkSize)
         return(as.factor(rep(1L, len)))
     as.factor(rep(1:ceiling(len / chunkSize), each = chunkSize)[seq_len(len)])
+}
+
+#' @rdname Spectra
+#'
+#' @author Nir Shahaf, Johannes Rainer
+#'
+#' @export
+deisotopeSpectra <-
+    function(x, substDefinition = isotopicSubstitutionMatrix("HMDB_NEUTRAL"),
+             tolerance = 0, ppm = 20, charge = 1) {
+        im <- force(substDefinition)
+        x@processing <- .logging(x@processing, "Deisotope spectra.")
+        addProcessing(x, .peaks_deisotope, tolerance = tolerance, ppm = ppm,
+                      substDefinition = im, charge = charge)
+    }
+
+#' @rdname Spectra
+#'
+#' @author Nir Shahaf, Johannes Rainer
+#'
+#' @export
+reduceSpectra <- function(x, tolerance = 0, ppm = 20) {
+    x@processing <- .logging(x@processing, "For groups of peaks with similar ",
+                             "m/z keep the one with the highest intensity.")
+    addProcessing(x, .peaks_reduce, tolerance = tolerance, ppm = ppm)
+}
+
+#' @rdname Spectra
+#'
+#' @author Nir Shahaf
+#'
+#' @export
+filterPrecursorMaxIntensity <- function(x, tolerance = 0, ppm = 20) {
+    pmz <- precursorMz(x)
+    pmi <- precursorIntensity(x)
+    if (any(!is.na(pmz)) && all(is.na(pmi)))
+        message("Most/all precursor intensities are 'NA'. Please add ",
+                "(estimated) precursor intensities to 'x' (see ",
+                "'?estimatePrecursorIntensity' for more information and ",
+                "examples.")
+    idx <- order(pmz, na.last = NA)
+    mz_grps <- group(pmz[idx], tolerance = tolerance, ppm = ppm)
+    if (any(duplicated(mz_grps))) {
+        keep <- is.na(pmz)
+        keep[vapply(split(idx, as.factor(mz_grps)),
+                    function(z) {
+                        if (length(z) == 1L) z
+                        else {
+                            ## returns the first if all intensities are NA.
+                            if (length(res <- z[which.max(pmi[z])])) res
+                            else z[1L]
+                        }
+                    }, integer(1L),
+                    USE.NAMES = FALSE)] <- TRUE
+        x <- x[keep]
+    }
+    x@processing <- .logging(
+        x@processing, "Filter: for groups of spectra with similar precursor ",
+        "m/z, keep the one with the highest precursor intensity")
+    x
+}
+
+#' @rdname Spectra
+#'
+#' @author Nir Shahaf
+#'
+#' @export
+filterPrecursorIsotopes <-
+    function(x, tolerance = 0, ppm = 20,
+             substDefinition = isotopicSubstitutionMatrix("HMDB_NEUTRAL")) {
+        pmz <- precursorMz(x)
+        pmi <- precursorIntensity(x)
+        if (any(!is.na(pmz)) && all(is.na(pmi)))
+            message("Most/all precursor intensities are 'NA'. Please add ",
+                    "(estimated) precursor intensities to 'x' (see ",
+                    "'?estimatePrecursorIntensity' for more information and ",
+                    "examples.")
+        idx <- order(pmz, na.last = NA)
+        if (length(idx)) {
+            keep <- rep(TRUE, length(pmz))
+            iso_grps <- isotopologues(
+                cbind(pmz[idx], pmi[idx]),
+                tolerance = tolerance, ppm = ppm,
+                substDefinition = substDefinition)
+            rem <- unlist(lapply(iso_grps, function(z) z[-1]),
+                          use.names = FALSE)
+            if (length(rem))
+                keep[idx[rem]] <- FALSE
+            x <- x[keep]
+        }
+        x@processing <- .logging(
+            x@processing, "Filter: for groups of spectra for precursors ",
+            "representing potential isotopes keep only the spectrum of the ",
+            "monoisotopic precursor.")
+        x
+}
+
+#' @rdname Spectra
+#'
+#' @author Johannes Rainer
+#'
+#' @export
+scalePeaks <- function(x, by = sum, msLevel. = uniqueMsLevels(x)) {
+    msl <- force(msLevel.)
+    x <- addProcessing(x, .peaks_scale_intensities, msLevel = msl,
+                       by = by, spectraVariables = "msLevel")
+    x@processing <- .logging(
+        x@processing, "Scale peak intensities in spectra of MS level(s) ",
+        paste0(msLevel., collapse = ", "), ".")
+    x
+}
+
+#' @rdname Spectra
+#'
+#' @export
+filterPrecursorPeaks <- function(object, tolerance = 0, ppm = 20,
+                                 mz = c("==", ">="),
+                                 msLevel. = uniqueMsLevels(object)) {
+    if (!inherits(object, "Spectra"))
+        stop("'object' is expected to be an instance of class 'Spectra'.")
+    if (!.check_ms_level(object, msLevel.))
+        return(object)
+    if (length(tolerance) != 1)
+        stop("'tolerance' should be of length 1")
+    if (length(ppm) != 1)
+        stop("'ppm' should be of length 1")
+    mz <- match.arg(mz)
+    if (mz == "==") {
+        FUN <- .peaks_filter_precursor_ne
+        msg <- "matching precursor m/z."
+    } else {
+        FUN <- .peaks_filter_precursor_keep_below
+        msg <- "above precursor."
+    }
+    object <- addProcessing(
+        object, FUN, tolerance = tolerance, ppm = ppm,
+        msLevel = msLevel.,
+        spectraVariables = c("msLevel", "precursorMz"))
+    object@processing <- .logging(
+        object@processing, "Filter: remove peaks ", msg)
+    object
 }

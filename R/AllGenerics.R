@@ -1,7 +1,8 @@
 #' @include hidden_aliases.R
 NULL
 
-#' @rdname hidden_aliases
+setGeneric("backendBpparam", def = function(object, ...)
+    standardGeneric("backendBpparam"))
 setGeneric("backendInitialize", def = function(object, ...)
     standardGeneric("backendInitialize"),
     valueClass = "MsBackend")
@@ -11,6 +12,8 @@ setGeneric("backendMerge", def = function(object, ...)
     valueClass = "MsBackend")
 #' @rdname hidden_aliases
 setMethod("bin", "numeric", MsCoreUtils::bin)
+setGeneric("combinePeaks", function(object, ...)
+           standardGeneric("combinePeaks"))
 #' @rdname hidden_aliases
 setGeneric("containsMz", function(object, ...)
     standardGeneric("containsMz"))
@@ -99,9 +102,6 @@ setGeneric("spectrapply", function(object, ...) standardGeneric("spectrapply"))
 #' @export
 setGeneric("spectraVariableMapping", function(object, ...)
     standardGeneric("spectraVariableMapping"))
-
-setGeneric("uniqueMsLevels", function(object, ...)
-    standardGeneric("uniqueMsLevels"))
 
 setGeneric("supportsSetBackend", function(object, ...)
     standardGeneric("supportsSetBackend"))

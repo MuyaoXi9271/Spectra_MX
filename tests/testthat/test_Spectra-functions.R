@@ -258,23 +258,24 @@ test_that(".combine_spectra works", {
     expect_true(length(res) == 1)
     expect_equal(res$mz[[1]], sort(unlist(spd$mz)))
 
-    res <- .combine_spectra(sps, FUN = combinePeaks, tolerance = 0.1)
+    res <- .combine_spectra(sps, FUN = combinePeaksData, tolerance = 0.1)
     expect_true(length(res) == 1)
     expect_equal(res$mz[[1]], c(mean(c(12, 12.1)), mean(c(14, 14.1, 14.15)),
                                 mean(c(34, 34.1)), 45, mean(c(56, 56.1))))
     expect_equal(res$intensity[[1]], c(mean(c(10, 12)), mean(c(20, 11, 22)),
                                        mean(c(21, 32)), 30, mean(c(40, 31))))
-    res <- .combine_spectra(sps, FUN = combinePeaks, tolerance = 0.1,
+    res <- .combine_spectra(sps, FUN = combinePeaksData, tolerance = 0.1,
                             mzFun = max, intensityFun = median)
     expect_true(length(res) == 1)
     expect_equal(res$mz[[1]], c(max(c(12, 12.1)), max(c(14, 14.1, 14.15)),
                                 max(c(34, 34.1)), 45, max(c(56, 56.1))))
-    expect_equal(res$intensity[[1]], c(median(c(10, 12)), median(c(20, 11, 22)),
-                                       median(c(21, 32)), 30, median(c(40, 31))))
+    expect_equal(res$intensity[[1]],
+                 c(median(c(10, 12)), median(c(20, 11, 22)),
+                   median(c(21, 32)), 30, median(c(40, 31))))
 
     ## See if it works with MsBackendMzR
     sps <- Spectra(sciex_mzr)
-    res <- .combine_spectra(sps, tolerance = 0.1, FUN = combinePeaks)
+    res <- .combine_spectra(sps, tolerance = 0.1, FUN = combinePeaksData)
     expect_true(length(res) == 2)
     expect_true(is(res, "Spectra"))
     expect_true(class(res@backend) == "MsBackendMemory")
@@ -599,6 +600,28 @@ test_that(".peaksapply works", {
                                                  list(intensity = c(0.1, Inf)))))
     res_4 <- .peaksapply(sps, spectraVariables = c("msLevel", "centroided"))
     expect_equal(res_3, res_4)
+
+    ## processing queue and f.
+    a <- sps[1:10]
+    ref <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = rep(1, 10))
+    res <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = c(3, 3, 3, 3, 2, 2, 2, 2, 1, 1))
+    expect_equal(ref, res)
+    res <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = NULL)
+    expect_equal(ref, res)
+
+    ## no processing queue and f.
+    a@processingQueue <- list()
+    ref <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = rep(1, 10))
+    res <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = c(3, 3, 3, 3, 2, 2, 2, 2, 1, 1))
+    expect_equal(ref, res)
+    res <- .peaksapply(a, spectraVariables = c("msLevel", "centroided"),
+                       f = NULL)
+    expect_equal(ref, res)
 })
 
 test_that(".apply_processing_queue works", {
@@ -698,4 +721,115 @@ test_that("chunkapply works", {
     chnks <- as.factor(c(2, 2, 2, 1, 1, 1, 4, 3, 3, 3))
     res2 <- chunkapply(a, lengths, chunks = chnks)
     expect_equal(res2, res)
+})
+
+test_that("deisotopeSpectra works", {
+    res <- deisotopeSpectra(sps_dia[1:10], ppm = 20)
+    expect_true(length(res@processingQueue) > length(sps_dia@processingQueue))
+    expect_true(all(lengths(res) < lengths(sps_dia[1:10])))
+})
+
+test_that("reduceSpectra works", {
+    res <- reduceSpectra(sps_dia[14], ppm = 20, tolerance = 0.1)
+    expect_true(length(res@processingQueue) > length(sps_dia@processingQueue))
+    expect_true(nrow(peaksData(res)[[1L]]) < nrow(peaksData(sps_dia[14])[[1L]]))
+})
+
+test_that("filterPrecursorMaxIntensity works", {
+    ms1 <- filterMsLevel(sps_dda, 1L)
+    res <- filterPrecursorMaxIntensity(ms1)
+    expect_equal(rtime(res), rtime(ms1))
+    expect_true(length(res@processing) > length(ms1@processing))
+
+    expect_equal(rtime(filterMsLevel(res, 1L)),
+                 rtime(filterMsLevel(sps_dda, 1L)))
+
+    res <- filterPrecursorMaxIntensity(filterRt(sps_dda, c(200, 300)))
+
+    ## calculate manually:
+    tmp <- filterRt(filterMsLevel(sps_dda, 2L), c(200, 300))
+    idx <- order(precursorMz(tmp))
+    tmp <- tmp[idx]
+
+    grps <- MsCoreUtils::group(precursorMz(tmp), tolerance = 0, ppm = 20)
+    tmpl <- split(tmp, as.factor(grps))
+    ref <- lapply(tmpl, function(z) {
+        z[which.max(precursorIntensity(z))]
+    })
+    ref <- concatenateSpectra(ref)      # maybe run on subset only...
+    expect_equal(sort(rtime(ref)), rtime(filterMsLevel(res, 2L)))
+
+    ## Artificial data.
+    tmp <- sps_dda[1:12]
+    tmp$precursorMz <- c(NA, 13, NA, 5, 5, NA, 13, 5, 3, NA, 13, NA)
+    tmp$precursorIntensity <- c(NA, 4, NA, 3, 200, NA, 8, 100, 23, NA, 400, NA)
+    res <- filterPrecursorMaxIntensity(tmp)
+    expect_true(length(res) == 8)
+    expect_equal(rtime(res), rtime(tmp[c(1, 3, 5, 6, 9, 10, 11, 12)]))
+})
+
+test_that("filterPrecursorIsotopes works", {
+    x <- sps_dda[1:10]
+    x$precursorMz <- c(NA, 803.4, 804.41, 115, NA, 805.41, 116, 123.2, NA, NA)
+    x$precursorIntensity <- c(NA, 100, 42.7, 100, NA, 15.58, 4.7, 100, NA, NA)
+
+    res <- filterPrecursorIsotopes(x, ppm = 40)
+    expect_equal(precursorIntensity(res), c(NA, 100, 100, NA, 100, NA, NA))
+    expect_equal(rtime(res), rtime(x)[c(1, 2, 4, 5, 8, 9, 10)])
+
+    ## single isotopologue group
+    res <- filterPrecursorIsotopes(x, ppm = 20)
+    expect_equal(precursorIntensity(res), c(NA, 100, 100, NA, 4.7, 100, NA, NA))
+    expect_equal(rtime(res), rtime(x)[c(1, 2, 4, 5, 7, 8, 9, 10)])
+
+    ## DDA data will not have isotope peaks
+    x <- filterRt(sps_dda, c(200, 300))
+    x$precursorIntensity <- estimatePrecursorIntensity(x)
+    res <- filterPrecursorIsotopes(x)
+    expect_true(length(res) < length(x))
+
+    x <- filterMsLevel(sps_dda, 1L)
+    res <- filterPrecursorIsotopes(x)
+    expect_equal(rtime(res), rtime(x))
+})
+
+test_that("scalePeaks works", {
+    tmp <- data.frame(msLevel = c(1L, 2L, 2L, 3L), rtime = 1:4)
+    tmp$mz <- list(1:3, 1:2, 1:4, 1:3)
+    tmp$intensity <- list(c(12, 32.2, 12.1), c(34, 35.2),
+                          c(1, 2, 3, 4), c(112, 341, 532))
+    sps <- Spectra(tmp)
+    res <- scalePeaks(sps)
+    expect_true(length(res@processingQueue) > length(sps@processingQueue))
+    expect_true(length(res@processing) > length(sps@processing))
+
+    expect_true(all(sum(intensity(res)) == 1))
+    expect_true(all(unlist(intensity(res) < 1)))
+
+    res <- scalePeaks(sps, by = max)
+    expect_true(all(max(intensity(res)) == 1))
+
+    res <- scalePeaks(sps, by = sum, msLevel. = 2)
+    expect_equal(res$intensity[[1L]], sps$intensity[[1L]])
+    expect_true(sum(intensity(res)[[2L]]) == 1)
+    expect_true(sum(intensity(res)[[3L]]) == 1)
+    expect_equal(res$intensity[[4L]], sps$intensity[[4L]])
+})
+
+test_that("filterPrecursorPeaks,Spectra works", {
+    x <- Spectra(tmt_mzr[5:15])
+    expect_error(filterPrecursorPeaks(4), "instance of class")
+    expect_error(filterPrecursorPeaks(x, tolerance = c(3, 4)), "length 1")
+    expect_error(filterPrecursorPeaks(x, ppm = c(12.3, 24.4)), "length 1")
+    expect_warning(res <- filterPrecursorPeaks(x, msLevel. = 5), "available")
+    expect_equal(res, x)
+
+    res <- filterPrecursorPeaks(x, mz = "==", tolerance = 0.2)
+    expect_true(length(res@processing) > 0)
+    expect_true(lengths(res)[1L] < lengths(x)[1L])
+
+    res <- filterPrecursorPeaks(x, mz = ">=")
+    expect_true(all(lengths(res)[msLevel(x) > 1L] <
+                    lengths(x)[msLevel(x) > 1L]))
+    expect_equal(lengths(res)[msLevel(x) == 1L], lengths(x)[msLevel(x) == 1L])
 })

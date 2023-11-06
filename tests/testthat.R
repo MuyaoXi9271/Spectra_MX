@@ -1,4 +1,5 @@
 library("testthat")
+library("patrick")
 library("Spectra")
 
 register(SerialParam())
@@ -13,6 +14,14 @@ sciex_pks <- peaksData(sciex_mzr)
 fl <- normalizePath(
     dir(system.file("proteomics", package = "msdata"), full.names = TRUE))
 tmt_mzr <- backendInitialize(MsBackendMzR(), files = fl[5])
+
+fl <- system.file("TripleTOF-SWATH", "PestMix1_SWATH.mzML",
+                  package = "msdata")
+sps_dia <- Spectra(fl)
+
+fl <- system.file("TripleTOF-SWATH", "PestMix1_DDA.mzML",
+                  package = "msdata")
+sps_dda <- Spectra(fl)
 
 sciex_hd5 <- backendInitialize(MsBackendHdf5Peaks(),
                                data = spectraData(sciex_mzr),

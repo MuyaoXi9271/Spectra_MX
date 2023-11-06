@@ -101,6 +101,16 @@ test_that(".peaks_bin works", {
     expect_equal(res[, 2], c(1, 5, 1, 0, 1, 13, 8, 1, 3, 0, 6, 15, 1, 0, 0))
 })
 
+test_that("joinPeaksNone works", {
+    x <- cbind(c(31.34, 50.14, 60.3, 120.9, 230, 514.13, 874.1),
+               1:7)
+    y <- cbind(c(12, 31.35, 70.3, 120.9 + ppm(120.9, 5),
+                 230 + ppm(230, 10), 315, 514.14, 901, 1202),
+               1:9)
+    res <- joinPeaksNone(x, y, ppm = 20)
+    expect_equal(res, list(x = x, y = y))
+})
+
 test_that("joinPeaks works", {
     x <- cbind(c(31.34, 50.14, 60.3, 120.9, 230, 514.13, 874.1),
                1:7)
@@ -220,7 +230,7 @@ test_that(".peaks_match_mz_value works", {
     res <- .peaks_filter_mz_value(p, 1L, mz = 5, tolerance = 1)
     expect_equal(unname(res[, "intensity"]), 2)
     res <- .peaks_filter_mz_value(p, 1L, mz = c(5.5, 599.41), tolerance = 0.1)
-    expect_equal(unname(res[, "intensity"]), c(2, 6))
+    expect_equal(unname(res[, "intensity"]), c(2, 5, 6, 7))
 
     res <- .peaks_filter_mz_value(p, 1L, mz = c(123, 742.2),
                                   tolerance = c(0.2, 1))
@@ -300,4 +310,170 @@ test_that(".peaks_remove_fft_artifact works", {
     pks <- peaksData(fft_spectrum)[[1L]]
     res <- .peaks_remove_fft_artifact(pks)
     expect_true(nrow(pks) > nrow(res))
+})
+
+test_that(".peaks_deisotope works", {
+    x <- cbind(mz = c(12.2, 14), intensity = c(11, 23))
+    res <- .peaks_deisotope(x)
+    expect_equal(x, res)
+
+    x <- cbind(mz = c(45, 68, 69, 70), intensity = c(20, 100, 3, 0.23))
+    res <- .peaks_deisotope(x, tolerance = 0.1)
+    expect_equal(res, x[1:2, ])
+
+    ## SWATH spectrum.
+    a <- filterMsLevel(sps_dia, 2L)[4L]
+    res <- .peaks_deisotope(peaksData(a)[[1L]])
+    expect_true(nrow(res) < lengths(a))
+})
+
+test_that(".peaks_reduce works", {
+    x <- peaksData(sps_dia[2000])[[1L]]
+    res <- .peaks_reduce(x, tolerance = 0.1)
+    expect_true(is.matrix(res))
+    expect_true(nrow(res) < nrow(x))
+    expect_true(is.numeric(res))
+
+    grp <- group(x[, "mz"], tolerance = 0.1, ppm = 10)
+    xl <- split.data.frame(x, grp)
+    ref <- lapply(xl, function(z) z[which.max(z[, 2]), , drop = FALSE])
+    ref <- do.call(rbind, ref)
+    expect_equal(ref, res)
+
+    res <- .peaks_reduce(x, tolerance = 0, ppm = 0)
+    expect_equal(res, x)
+
+    x <- sciex_pks[[13]]
+    res <- .peaks_reduce(x, tolerance = 0.1)
+    expect_true(is.matrix(res))
+    expect_true(nrow(res) < nrow(x))
+    expect_true(is.numeric(res))
+
+    grp <- group(x[, "mz"], tolerance = 0.1, ppm = 10)
+    xl <- split.data.frame(x, grp)
+    ref <- lapply(xl, function(z) z[which.max(z[, 2]), , drop = FALSE])
+    ref <- do.call(rbind, ref)
+    expect_equal(ref, res)
+})
+
+test_that(".peaks_scale_intensities works", {
+    x <- cbind(mz = 1:3, intensity = c(20, 23, 14))
+    res <- .peaks_scale_intensities(x, spectrumMsLevel = 1L, msLevel = 1L)
+    expect_equal(res[, 2], x[, 2] / sum(x[, 2]))
+
+    res <- .peaks_scale_intensities(x, by = max, spectrumMsLevel = 1L,
+                                    msLevel = 1L)
+    expect_equal(res[, 2], x[, 2] / max(x[, 2]))
+
+    res <- .peaks_scale_intensities(x, by = sum, spectrumMsLevel = 1L,
+                                    msLevel = 2L)
+    expect_equal(res, x)
+})
+
+with_parameters_test_that(".peaks_combine works", {
+    res <- .peaks_combine(x, msLevel = 2L, spectrumMsLevel = 2L)
+    expect_equal(x, res)
+    res <- .peaks_combine(x, msLevel = 1L, spectrumMsLevel = 2L,
+                          tolerance = 0.2)
+    expect_equal(x, res)
+    expect_equal(class(x), class(res))
+
+    res <- .peaks_combine(x, msLevel = 2L, spectrumMsLevel = 2L,
+                          tolerance = 0.1)
+    expect_equal(class(x), class(res))
+    expect_equal(nrow(res), 4)
+    expect_equal(res[1, ], x[1, ])
+    expect_equal(unname(res[2, 1]),
+                 weighted.mean(x[c(2, 3, 4), 1], x[c(2, 3, 4), 2] + 1))
+    expect_equal(unname(res[2, 2]), mean(x[c(2, 3, 4), 2]))
+    a <- res[3, , drop = FALSE]
+    b <- x[5, , drop = FALSE]
+    rownames(a) <- rownames(b) <- NULL
+    expect_equal(a, b)
+    expect_equal(unname(res[4, 1]),
+                 weighted.mean(x[6:9, 1], x[6:9, 2] + 1))
+    expect_equal(unname(res[4, 2]), mean(x[6:9, 2]))
+    if (is.data.frame(x))
+        expect_equal(res[, "pk_ann"], c("a", "b", "e", NA_character_))
+
+    res <- .peaks_combine(x, msLevel = 2L, spectrumMsLevel = 2L,
+                          tolerance = 0.1, weighted = FALSE,
+                          intensityFun = max, mzFun = median)
+    expect_equal(class(x), class(res))
+    expect_equal(nrow(res), 4)
+    expect_equal(res[1, ], x[1, ])
+    expect_equal(unname(res[2, 1]), median(x[2:4, 1]))
+    expect_equal(unname(res[2, 2]), max(x[2:4, 2]))
+    a <- res[3, , drop = FALSE]
+    b <- x[5, , drop = FALSE]
+    rownames(a) <- rownames(b) <- NULL
+    expect_equal(a, b)
+    expect_equal(unname(res[4, 1]), median(x[6:9, 1]))
+    expect_equal(unname(res[4, 2]), max(x[6:9, 2]))
+    if (is.data.frame(x))
+        expect_equal(res[, "pk_ann"], c("a", "b", "e", NA_character_))
+
+},
+cases(
+    matrix = list(
+        x = cbind(mz = c(100.1,
+                         103.1, 103.2, 103.24,
+                         302,
+                         304.2, 304.25, 304.3, 304.35),
+                  intensity = c(100,
+                                300, 600, 100,
+                                30,
+                                45, 46, 0, 46))
+    ),
+    data.frame = list(
+        x = data.frame(mz = c(100.1, 103.1, 103.2, 103.24, 302, 304.2,
+                              304.25, 304.3, 304.35),
+                       intensity = c(100, 300, 600, 100, 30, 45, 46, 0, 46),
+                       pk_ann = c("a", "b", "b", "b", "e", "f", "g", "h", "i"))
+    )
+))
+
+test_that(".peaks_filter_precursor_ne works", {
+    x <- cbind(mz = c(13.4, 14.1, 14.2, 14.24, 17.3, 120.1),
+               intensity = 1:6)
+    res <- .peaks_filter_precursor_ne(x, spectrumMsLevel = 2L, msLevel = 1)
+    expect_equal(res, x)
+    res <- .peaks_filter_precursor_ne(x, spectrumMsLevel = 2L, msLevel = 2L,
+                                      precursorMz = 200)
+    expect_equal(res, x)
+    res <- .peaks_filter_precursor_ne(x, spectrumMsLevel = 2L, msLevel = 2L,
+                                      precursorMz = 14.2)
+    expect_equal(res, x[-3, ])
+    res <- .peaks_filter_precursor_ne(x, spectrumMsLevel = 2L, msLevel = 2L,
+                                      precursorMz = 14.2, tolerance = 0.1)
+    expect_equal(res, x[-c(2, 3, 4), ])
+})
+
+test_that(".peaks_filter_precursor_keep_below works", {
+    x <- cbind(mz = c(13.4, 14.1, 14.2, 14.24, 17.3, 120.1),
+               intensity = 1:6)
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = 2L, msLevel = 1L)
+    expect_equal(res, x)
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = 2L, msLevel = NA)
+    expect_equal(res, x)
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = NA, msLevel = 1L)
+    expect_equal(res, x)
+
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = 1L, msLevel = 1L,
+        precursorMz = 20)
+    expect_equal(res[, "intensity"], 1:5)
+
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = 1L, msLevel = 1L,
+        precursorMz = 14.2)
+    expect_equal(res[, "intensity"], 1:2)
+
+    res <- .peaks_filter_precursor_keep_below(
+        x, spectrumMsLevel = 1L, msLevel = 1L,
+        precursorMz = 14.2, tolerance = 0.1)
+    expect_equal(unname(res[, "intensity"]), 1)
 })

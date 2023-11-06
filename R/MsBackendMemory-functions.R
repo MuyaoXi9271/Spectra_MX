@@ -7,9 +7,19 @@ MsBackendMemory <- function() {
 
 .df_pdata_column <- function(x, column) {
     idx <- which(colnames(x[[1L]]) == column)
-    if (length(idx)) {
+    if (length(idx))
         lapply(x, `[`, , j = idx)
-    } else stop("No peaks variable \"", column, "\" available")
+    else {
+        if (column %in% c("mz", "intensity"))
+            NumericList(vector("list", length(x)), compress = FALSE)
+        else stop("No peaks variable \"", column, "\" available")
+    }
+}
+
+.df_empty_peaks_data <- function(x) {
+    emat <- matrix(numeric(), ncol = 2, nrow = 0,
+                   dimnames = list(character(), c("mz", "intensity")))
+    replicate(x, emat, simplify = FALSE)
 }
 
 #' Check columns of a DataFrame or data.frame for their data type. If they
@@ -105,4 +115,21 @@ MsBackendMemory <- function() {
                  "Combining such objects is currently not supported.")
     }
     res
+}
+
+.check_peaks_data_value <- function(x, lo) {
+    if (!(is.list(x) || inherits(x, "SimpleList")))
+        stop("'value' has to be a list-like object")
+    if (length(x) != lo)
+        stop("Length of 'value' has to match length of 'object'")
+    if (!(is.matrix(x[[1L]]) | is.data.frame(x[[1L]])))
+        stop("'value' is expected to be a 'list' of 'matrix' ",
+             "or 'data.frame'")
+    cn <- colnames(x[[1L]])
+    lcn <- length(cn)
+    lapply(x, function(z) {
+        cur_cn <- colnames(z)
+        if (lcn != length(cur_cn) || !all(cn == cur_cn))
+            stop("provided matrices don't have the same column names")
+    })
 }
