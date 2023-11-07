@@ -195,12 +195,12 @@ NULL
 #' ## Report the minimal m/z and intensity
 #' combinePeaksData(list(p1, p2, p3), peaks = "intersect", tolerance = 0.1,
 #'     intensityFun = min, mzFun = min)
-combinePeaks <- function(x, intensityFun = base::mean,
-                         mzFun = base::mean, weighted = FALSE,
-                         tolerance = 0, ppm = 0, timeDomain = FALSE,
-                         group_method = c("group", "group_mz_int"),
-                         peaks = c("union", "intersect"), main = integer(),
-                         minProp = 0.5, ...) {
+combinePeaksData <- function(x, intensityFun = base::mean,
+                             mzFun = base::mean, weighted = FALSE,
+                             tolerance = 0, ppm = 0, timeDomain = FALSE,
+                             group_method = c("group", "group_mz_int"),
+                             peaks = c("union", "intersect"), main = integer(),
+                             minProp = 0.5, ...) {
   peaks <- match.arg(peaks)
   lenx <- length(x)
   if (lenx == 1)
