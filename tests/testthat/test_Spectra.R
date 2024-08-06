@@ -1096,6 +1096,96 @@ test_that("filterRt,Spectra works", {
     expect_equal(rtime(res), rtime(sps))
 })
 
+test_that("filterRanges, Spectra works", {
+    filt_spectra <- filterRanges(sps_dia, spectraVariables = c("rtime",
+                                                               "precursorMz",
+                                                               "peaksCount"),
+                                 ranges = c(30, 350, 200,500, 350, 600))
+    # test does not accept logical
+    logical_test <- spectraVariables(sps_dia) %in% c("rtime", "precursorMz",
+                                                     "peaksCount")
+    expect_error(filterRanges(sps_dia, spectraVariables = logical_test,
+                              ranges = c(30, 350, 200,500, 350, 600)),
+                 "character")
+    # do not accept values other than numerical
+    fls <- unique(dataOrigin(sps_dia))
+    expect_error(filterRanges(sps_dia, spectraVariables = "dataOrigin",
+                 ranges = c(fls[1], fls[1])), "numerical")
+    # test too many variables
+    expect_error(filterRanges(sps_dia, spectraVariables = c("rtime",
+                                                            "precursorMz",
+                                                            "peaksCount",
+                                                            "lowMZ"),
+                              ranges = c(30, 350, 200,500, 350, 600)), "Length")
+    # test too many ranges
+    expect_error(filterRanges(sps_dia, spectraVariables = c("rtime",
+                                                            "precursorMz",
+                                                            "peaksCount"),
+                              ranges = c(30, 350, 200,500, 350, 600, 20, 800)),
+                 "Length")
+    expect_true(length(sps_dia) > length(filt_spectra))
+    # test does not accept variables not in spectraData
+    expect_error(filterRanges(sps_dia, spectraVariables = c("rtime",
+                                                            "precursorMz",
+                                                            "peaksCount",
+                                                            "fakeVar"),
+                              ranges = c(30, 350, 200,500, 350, 600, 20, 800)),
+                 "not available")
+    # test same results as specific filtering functions
+    spe_fct <- filterPrecursorMzRange(sps_dia, c(200,500))
+    range_fct <- filterRanges(sps_dia, spectraVariables = "precursorMz",
+                              ranges = c(200,500))
+    expect_equal(length(spe_fct), length(range_fct))
+    # test any match
+    ranges <- c(30, 60, 200, 250)
+    filt_spectra <- filterRanges(sps_dia, spectraVariables = c("rtime", "rtime"),
+                    ranges = ranges, match = "any")
+    expect_true(all(range(rtime(filt_spectra)) <= 250 &
+                        range(rtime(filt_spectra)) >= 30))
+})
+
+test_that("filterValues, Spectra works", {
+    # Not testing for the same sanity checks as filterRanges
+    ## expect error
+    fls <- unique(dataOrigin(sps_dia))
+    expect_error(filterValues(sps_dia, spectraVariables = "dataOrigin",
+                 values = fls[1]), "numerical")
+    ## test recycling
+    filt_spectra <- filterValues(sps_dia, spectraVariables = c("rtime",
+                                                               "precursorMz",
+                                                               "peaksCount"),
+                                 values = c(200, 400, 350),
+                                 tolerance = c(100, 100, 100),
+                                 ppm = c(0 ,30, 0))
+    filt_recycle <- filterValues(sps_dia, spectraVariables = c("rtime",
+                                                               "precursorMz",
+                                                               "peaksCount"),
+                                 values = c(200, 400, 350),
+                                 tolerance = 100,
+                                 ppm = c(0, 40, 0))
+    expect_equal(length(filt_spectra), length(filt_recycle))
+    expect_true(length(sps_dia) > length(filt_spectra))
+    #' expect warning
+    expect_warning(filterValues(sps_dia, spectraVariables = c("rtime",
+                                                              "precursorMz",
+                                                              "peaksCount"),
+                                values = c(200, 400, 350),
+                                tolerance = 100), "recycled")
+    #' test same results as filterPrecursorMzValues
+    spe_fct <- filterPrecursorMzValues(sps_dia, mz = 300, ppm = 20, tolerance = 10)
+    values_fct <- filterValues(sps_dia, spectraVariables = "precursorMz",
+                               values = 300, ppm = 20, tolerance = 10)
+    expect_equal(length(spe_fct), length(values_fct))
+
+    # test any
+    values <- c(200, 400)
+    filt_spectra <- filterValues(sps_dia, spectraVariables = c("rtime", "rtime"),
+                                 values = values, match = "any",
+                                 tolerance = 100)
+    expect_true(all(range(rtime(filt_spectra)) <= 500 &
+                        range(rtime(filt_spectra)) >= 100))
+})
+
 #### ---------------------------------------------------------------------------
 ##
 ##                      DATA MANIPULATION METHODS
@@ -1105,9 +1195,9 @@ test_that("filterRt,Spectra works", {
 test_that("bin,Spectra works", {
     sps <- Spectra(tmt_mzr)
     pks <- peaksData(sps)
-    res <- bin(sps, binSize = 2)
+    res <- bin(sps, binSize = 2, zero.rm = FALSE)
     expect_true(length(res@processingQueue) == 1)
-    res1 <- bin(sps, msLevel = 1, binSize = 2)
+    res1 <- bin(sps, msLevel = 1, binSize = 2, zero.rm = FALSE)
 
     expect_identical(peaksData(res1)[res1$msLevel == 2],
                      pks[sps$msLevel == 2])
@@ -1115,7 +1205,7 @@ test_that("bin,Spectra works", {
     mzr <- range(unlist(mz(sps)))
     brks <- MsCoreUtils:::.fix_breaks(
                               seq(floor(mzr[1]), ceiling(mzr[2]), by = 2), mzr)
-    res1 <- bin(sps, msLevel = 1, breaks = brks)
+    res1 <- bin(sps, msLevel = 1, breaks = brks, zero.rm = FALSE)
     res1_pks <- peaksData(res1)
     res_pks <- peaksData(res)
     expect_identical(res1_pks[res1$msLevel == 1],
@@ -1775,4 +1865,77 @@ test_that("combinePeaks,Spectra works", {
                             intensityFun = median, mzFun = median,
                             msLevel = 1L, spectrumMsLevel = 1L)
     expect_equal(res_1, peaksData(res)[[1L]])
+})
+
+test_that("processingChunkSize works", {
+    expect_equal(processingChunkSize(sps_dia), Inf)
+    tmp <- sps_dia
+    processingChunkSize(tmp) <- 10
+    expect_equal(processingChunkSize(tmp), 10)
+})
+
+test_that("entropy,Spectra works", {
+  sps <- Spectra()
+  res <- entropy(sps)
+  expect_identical(res, numeric())
+
+  df <- DataFrame(msLevel = c(1L, 2L), centroided = TRUE)
+  df$mz <- list(1:3, 1:3)
+  df$intensity <- list(c(5, 9, 3), c(9, 8, 2))
+  sps <- Spectra(df)
+
+  res <- entropy(sps, normalized = TRUE)
+  expect_identical(res, vapply(df$intensity, MsCoreUtils::nentropy, numeric(1)))
+
+  res <- entropy(sps, normalized = FALSE)
+  expect_identical(res, vapply(df$intensity, MsCoreUtils::entropy, numeric(1)))
+})
+
+test_that("dataStorageBasePath,dataStorageBasePath<-,MsBackendMzR works", {
+    tmpd <- normalizePath(tempdir())
+    file.copy(sciex_file, tmpd)
+
+    tmp <- Spectra(sciex_mzr)
+    expect_equal(dataStorageBasePath(tmp),
+                 MsCoreUtils::common_path(sciex_file))
+    tmp <- sciex_mzr
+    tmp <- Spectra(tmp)
+    dataStorageBasePath(tmp) <- tmpd
+    expect_true(validObject(tmp@backend))
+    bp <- normalizePath(dataStorageBasePath(tmp))
+    expect_equal(bp, tmpd)
+
+    #' errors
+    expect_error(dataStorageBasePath(tmp) <- "some path", "Provided path")
+})
+
+
+test_that("asDataFrame works", {
+    sciex_file <- normalizePath(
+        dir(system.file("sciex", package = "msdata"), full.names = TRUE))
+    sp <- Spectra(sciex_file)
+    ## Full dataframe
+    df <- asDataFrame(sp)
+    expect_identical(nrow(df), sum(sapply(peaksData(sp), nrow)))
+    expect_identical(ncol(df), length(spectraVariables(sp)) + 2L)
+    expect_identical(names(df), c("mz", "intensity", spectraVariables(sp)))
+    ## Three first scans and 2 spectra variables
+    df <- asDataFrame(sp, i = 1:3, spectraVars = c("msLevel", "rtime"))
+    expect_identical(nrow(df), sum(sapply(peaksData(sp[1:3]), nrow)))
+    expect_identical(ncol(df), 2L + 2L)
+    ## Three first scans and no spectra variables
+    df <- asDataFrame(sp, i = 1:3, spectraVars = NULL)
+    expect_identical(nrow(df), sum(sapply(peaksData(sp[1:3]), nrow)))
+    expect_identical(ncol(df), 2L)
+    expect_identical(names(df), c("mz", "intensity"))
+})
+
+test_that("estimatePrecursorIntensity works", {
+    fls <- msdata::proteomics(full.names = TRUE)[c(5, 3)]
+    second <- Spectra(fls[2], backend = MsBackendMzR())
+    both <- Spectra(fls, backend = MsBackendMzR())
+
+    res_second <- estimatePrecursorIntensity(second)
+    res_both <- estimatePrecursorIntensity(both)
+    expect_equal(res_second, res_both[510:length(res_both)])
 })

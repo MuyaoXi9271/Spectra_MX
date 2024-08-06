@@ -6,9 +6,9 @@
 #'
 #' @description
 #'
-#' The `filterFourierTransformArtefacts` function removes (Orbitrap) fast
+#' The `filterFourierTransformArtefacts()` function removes (Orbitrap) fast
 #' fourier artefact peaks from spectra. Such artefacts (also referred to as
-#' *rippples*) seem to be related to the
+#' *ripples*) seem to be related to the
 #' [*ringing*](https://en.wikipedia.org/wiki/Ringing_artifacts) phenomenon and
 #' are frequently seen in Orbitrap data as small random mass peaks ~ 0.01 Da
 #' from a main peak with a very large intensity. See also
@@ -54,7 +54,7 @@
 #' \dontrun{
 #' library(Spectra)
 #' # get orbitrap data
-#' download.file("https://www.ebi.ac.uk/metabolights/ws/studies/MTBLS469/download/4cc5d820-dc5d-4766-8112-7a05f74acef4?file=AV_01_v2_male_arm1_juice.mzXML", "AV_01_v2_male_arm1_juice.mzXML")
+#' download.file("https://ftp.ebi.ac.uk/pub/databases/metabolights/studies/public/MTBLS469/AV_01_v2_male_arm1_juice.mzXML", "AV_01_v2_male_arm1_juice.mzXML")
 #' data <- Spectra("AV_01_v2_male_arm1_juice.mzXML")
 #' extracted_spectrum <- data[195]
 #' }

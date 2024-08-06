@@ -77,11 +77,11 @@ NULL
 #' @param ... optional additional arguments to `FUN`.
 #'
 #' @param f `factor` or `vector` that can be coerced to one defining how the
-#'     data should be split for parallel processing. Set to `NULL` to disable
-#'     parallel processing.
+#'     data should be split for parallel processing. Set to `NULL` or
+#'     `factor()` to disable splitting and parallel processing.
 #'
-#' @param columns `character` defining the columns that should be returned. This
-#'     will be passed to the backend's `peaksData` function.
+#' @param columns `character` defining the columns that should be returned.
+#'     This will be passed to the backend's `peaksData` function.
 #'
 #' @param BPPARAM parallel processing setup.
 #'
@@ -91,11 +91,40 @@ NULL
 #'
 #' @importMethodsFrom BiocParallel bplapply
 #'
+#' @note
+#'
+#' Who's calling `.peaksapply`:
+#'
+#' In *Spectra.R*:
+#'
+#' - `peaksData`: would pass optional parameter `f` down.
+#' - `as,Spectra,list`.
+#' - `intensity`: would pass optional parameter `f` down.
+#' - `ionCount`.
+#' - `isCentroided`.
+#' - `isEmpty`.
+#' - `mz`: would pass optional parameter `f` down.
+#' - `lengths`.
+#' - `$`.
+#' - `bin`.
+#'
+#' In *Spectra-functions.R*:
+#'
+#' - `.compare_spectra_chunk`: has its own `chunkSize` parameter and ignores
+#'   any other splitting. Does also some weird internal chunking by
+#'   `dataStorage` that we might want to skip/disable (or use
+#'   `backendParallelFactor` instead).
+#' - `.compare_spectra_self`: does not do any splitting.
+#' - `.combine_spectra`: uses `f = x$dataStorage` to split. Needs to be fixed.
+#' - `.estimate_precursor_intensity`: disables parallel/chunk wise processing.
+#'   But it's invoked splitting based on `dataOrigin`, so, should be OK.
+#'
 #' @noRd
 .peaksapply <- function(object, FUN = NULL, ...,
                         spectraVariables = .processingQueueVariables(object),
-                        f = dataStorage(object),
-                        columns = c("mz", "intensity"), BPPARAM = bpparam()) {
+                        f = .parallel_processing_factor(object),
+                        columns = c("mz", "intensity"),
+                        BPPARAM = backendBpparam(object)) {
     len <- length(object)
     lf <- length(f)
     if (!len)
@@ -179,36 +208,44 @@ NULL
 #' @export applyProcessing
 #'
 #' @rdname Spectra
-applyProcessing <- function(object, f = dataStorage(object),
+applyProcessing <- function(object, f = processingChunkFactor(object),
                             BPPARAM = bpparam(), ...) {
-    if (!length(object@processingQueue))
+    queue <- object@processingQueue
+    if (!length(queue))
         return(object)
     if (isReadOnly(object@backend))
         stop(class(object@backend), " is read-only. 'applyProcessing' works ",
              "only with backends that support writing data.")
     BPPARAM <- backendBpparam(object@backend, BPPARAM)
-    if (!is.factor(f))
-        f <- factor(f, levels = unique(f))
-    if (length(f) != length(object))
-        stop("length 'f' has to be equal to the length of 'object' (",
-             length(object), ")")
+    svars <- .processingQueueVariables(object)
     pv <- peaksVariables(object)
-    bknds <- bplapply(
-        split(object@backend, f = f), function(z, queue, pv, svars) {
-            if (length(svars))
-                spd <- as.data.frame(spectraData(z, columns = svars))
-            else spd <- NULL
-            peaksData(z) <- .apply_processing_queue(
-                peaksData(z, columns = pv), spd, queue)
-            z
-        }, queue = object@processingQueue, pv = pv,
-        svars = .processingQueueVariables(object),
-        BPPARAM = BPPARAM)
-    bknds <- backendMerge(bknds)
-    if (is.unsorted(f))
-        bknds <- bknds[order(unlist(split(seq_along(bknds), f),
-                                    use.names = FALSE))]
-    object@backend <- bknds
+    if (length(f)) {
+        if (!is.factor(f))
+            f <- factor(f, levels = unique(f))
+        if (length(f) != length(object))
+            stop("length 'f' has to be equal to the length of 'object' (",
+                 length(object), ")")
+        bknds <- bplapply(
+            split(object@backend, f = f), function(z, queue, pv, svars) {
+                if (length(svars))
+                    spd <- as.data.frame(spectraData(z, columns = svars))
+                else spd <- NULL
+                peaksData(z) <- .apply_processing_queue(
+                    peaksData(z, columns = pv), spd, queue)
+                z
+            }, queue = queue, pv = pv, svars = svars, BPPARAM = BPPARAM)
+        bknds <- backendMerge(bknds)
+        if (is.unsorted(f))
+            bknds <- bknds[order(unlist(split(seq_along(bknds), f),
+                                        use.names = FALSE))]
+        object@backend <- bknds
+    } else {
+        if (length(svars))
+            spd <- as.data.frame(spectraData(object@backend, columns = svars))
+        else spd <- NULL
+        peaksData(object@backend) <- .apply_processing_queue(
+            peaksData(object@backend, columns = pv), spd, queue)
+    }
     object@processing <- .logging(object@processing,
                                   "Applied processing queue with ",
                                   length(object@processingQueue),
@@ -310,12 +347,12 @@ applyProcessing <- function(object, f = dataStorage(object),
     bppx <- backendBpparam(x@backend, BPPARAM)
     if (is(bppx, "SerialParam"))
         fx <- NULL
-    else fx <- factor(dataStorage(x))
+    else fx <- backendParallelFactor(x@backend)
     pqvx <- .processingQueueVariables(x)
     bppy <- backendBpparam(y@backend, BPPARAM)
     if (is(bppy, "SerialParam"))
         fy <- NULL
-    else fy <- factor(dataStorage(y))
+    else fy <- backendParallelFactor(y@backend)
     pqvy <- .processingQueueVariables(y)
     if (nx <= chunkSize && ny <= chunkSize) {
         mat <- .peaks_compare(
@@ -341,14 +378,14 @@ applyProcessing <- function(object, f = dataStorage(object),
     for (x_chunk in x_chunks) {
         x_buff <- x[x_chunk]
         if (length(fx))
-            fxc <- factor(dataStorage(x_buff))
+            fxc <- backendParallelFactor(x_buff@backend)
         else fxc <- NULL
         x_peaks <- .peaksapply(x_buff, f = fxc, spectraVariables = pqvx,
                                BPPARAM = bppx)
         for (y_chunk in y_chunks) {
             y_buff <- y[y_chunk]
             if (length(fy))
-                fyc <- factor(dataStorage(y_buff))
+                fyc <- backendParallelFactor(y_buff@backend)
             else fyc <- NULL
             mat[x_chunk, y_chunk] <- .peaks_compare(
                 x_peaks, .peaksapply(y_buff, f = fyc, spectraVariables = pqvy,
@@ -460,7 +497,8 @@ applyProcessing <- function(object, f = dataStorage(object),
         x_new <- setBackend(x_new, MsBackendMemory())
     bpp <- SerialParam()
     peaksData(x_new@backend) <- lapply(
-        split(.peaksapply(x, f = NULL, BPPARAM = bpp), f = f), FUN = FUN, ...)
+        split(.peaksapply(x, f = factor(), BPPARAM = bpp), f = f),
+        FUN = FUN, ...)
     x_new@processingQueue <- list()
     validObject(x_new)
     x_new
@@ -652,81 +690,6 @@ processingLog <- function(x) {
     x@processing
 }
 
-#' @title Estimate Precursor Intensities
-#'
-#' @description
-#' Some MS instrument manufacturers don't provide precursor intensities for
-#' fragment spectra. These can however be estimated, given that also MS1
-#' spectra are available. The `estimatePrecursorIntensity` defines the
-#' precursor intensities for MS2 spectra using the intensity of the matching
-#' MS1 peak from the closest MS1 spectrum (i.e. the last MS1 spectrum measured
-#' before the respective MS2 spectrum). With `method = "interpolation"` it is
-#' also possible to calculate the precursor intensity based on an interpolation
-#' of intensity values (and retention times) of the matching MS1 peaks from the
-#' previous and next MS1 spectrum. See below for an example.
-#'
-#' @param x `Spectra` with MS1 and MS2 spectra.
-#'
-#' @param ppm `numeric(1)` with the maximal allowed relative difference of m/z
-#'     values between the precursor m/z of a spectrum and the m/z of the
-#'     respective ion on the MS1 scan.
-#'
-#' @param tolerance `numeric(1)` with the maximal allowed difference of m/z
-#'     values between the precursor m/z of a spectrum and the m/z of the
-#'     respective ion on the MS1 scan.
-#'
-#' @param method `character(1)` defining whether the precursor intensity
-#'     should be estimated on the previous MS1 spectrum (`method = "previous"`,
-#'     the default) or based on an interpolation on the previous and next
-#'     MS1 spectrum (`method = "interpolation"`).
-#'
-#' @param msLevel. `integer(1)` the MS level for which precursor intensities
-#'     should be estimated. Defaults to `2L`.
-#'
-#' @param f `factor` (or vector to be coerced to `factor`) defining which
-#'     spectra belong to the same original data file (sample).
-#'     Defaults to `f = dataOrigin(x)`.
-#'
-#' @param BPPARAM Parallel setup configuration. See [bpparam()] for more
-#'     information. This is passed directly to the [backendInitialize()] method
-#'     of the [MsBackend-class].
-#'
-#' @author Johannes Rainer with feedback and suggestions from Corey Broeckling
-#'
-#' @export
-#'
-#' @rdname estimatePrecursorIntensity
-#'
-#' @examples
-#'
-#' #' ## Calculating the precursor intensity for MS2 spectra:
-#' ##
-#' ## Some MS instrument manufacturer don't report the precursor intensities
-#' ## for MS2 spectra. The `estimatePrecursorIntensity` function can be used
-#' ## in these cases to calculate the precursor intensity on MS1 data. Below
-#' ## we load an mzML file from a vendor providing precursor intensities and
-#' ## compare the estimated and reported precursor intensities.
-#' tmt <- Spectra(msdata::proteomics(full.names = TRUE)[5],
-#'     backend = MsBackendMzR())
-#' pmi <- estimatePrecursorIntensity(tmt)
-#' plot(pmi, precursorIntensity(tmt))
-#'
-#' ## We can also replace the original precursor intensity values with the
-#' ## newly calculated ones
-#' tmt$precursorIntensity <- pmi
-estimatePrecursorIntensity <- function(x, ppm = 20, tolerance = 0,
-                                       method = c("previous", "interpolation"),
-                                       msLevel. = 2L, f = dataOrigin(x),
-                                       BPPARAM = bpparam()) {
-    if (is.factor(f))
-        f <- as.character(f)
-    f <- factor(f, levels = unique(f))
-    BPPARAM <- backendBpparam(x@backend, BPPARAM)
-    unlist(bplapply(split(x, f), FUN = .estimate_precursor_intensity, ppm = ppm,
-                    tolerance = tolerance, method = method, msLevel = msLevel.,
-                    BPPARAM = BPPARAM), use.names = FALSE)
-}
-
 #' estimate precursor intensities based on MS1 peak intensity. This function
 #' assumes that `x` is a `Spectra` with data **from a single file/sample**.
 #'
@@ -803,7 +766,7 @@ estimatePrecursorIntensity <- function(x, ppm = 20, tolerance = 0,
 #'
 #' @description
 #'
-#' `chunkapply` splits `x` into chunks and applies the function `FUN` stepwise
+#' `chunkapply()` splits `x` into chunks and applies the function `FUN` stepwise
 #' to each of these chunks. Depending on the object it is called, this
 #' function might reduce memory demand considerably, if for example only the
 #' full data for a single chunk needs to be loaded into memory at a time (e.g.,
@@ -1006,5 +969,326 @@ filterPrecursorPeaks <- function(object, tolerance = 0, ppm = 20,
         spectraVariables = c("msLevel", "precursorMz"))
     object@processing <- .logging(
         object@processing, "Filter: remove peaks ", msg)
+    object
+}
+
+#' @title Define a factor for parallel access to peaks data
+#'
+#' @description
+#'
+#' Define a factor to split a `Spectra` for parallel processing based on
+#' parallel processing setup,
+#'
+#' If `processingChunkSize(x)` is defined and its value is smaller then
+#' `length(x)`, a factor depending on this chunk size is returned.
+#' Otherwise `backendParallelFactor(x)` is returned which is the optimal
+#' splitting for parallel processing suggested by the backend.
+#'
+#' Properties/considerations:
+#'
+#' - in-memory backends: don't split if not requested by the user (e.g. by
+#'   specifying `f` or `chunkSize`.
+#' - on-disk backends: file-based backends, such as `MsBackendMzR`: perform
+#'   per file parallel processing if `f` or `chunkSize` is not defined.
+#'   Other on-disk backends: only if requested by the user.
+#'
+#' @param x `Spectra` object.
+#'
+#' @param chunkSize `integer` defining the size of chunks into which `x` should
+#'     be split.
+#'
+#' @return `factor` with the desired way how to split `x` for chunk-wise
+#'     processing (or `factor()` to disable).
+#'
+#' @author Johannes Rainer
+#'
+#' @noRd
+.parallel_processing_factor <- function(x, chunkSize = processingChunkSize(x)) {
+    lx <- length(x)
+    if (is.finite(chunkSize) && chunkSize < lx)
+        .chunk_factor(lx, chunkSize = chunkSize)
+    else backendParallelFactor(x@backend)
+}
+
+#' @title Parallel and chunk-wise processing of `Spectra`
+#'
+#' @description
+#'
+#' Many operations on `Spectra` objects, specifically those working with
+#' the actual MS data (peaks data), allow a chunk-wise processing in which
+#' the `Spectra` is splitted into smaller parts (chunks) that are
+#' iteratively processed. This enables parallel processing of the data (by
+#' data chunk) and also reduces the memory demand  since only the MS data
+#' of the currently processed subset is loaded into memory and processed.
+#' This chunk-wise processing, which is by default disabled, can be enabled
+#' by setting the processing chunk size of a `Spectra` with the
+#' `processingChunkSize()` function to a value which is smaller than the
+#' length of the `Spectra` object. Setting `processingChunkSize(sps) <- 1000`
+#' will cause any data manipulation operation on the `sps`, such as
+#' `filterIntensity()` or `bin()`, to be performed eventually in parallel for
+#' sets of 1000 spectra in each iteration.
+#'
+#' Such chunk-wise processing is specifically useful for `Spectra` objects
+#' using an *on-disk* backend or for very large experiments. For small data
+#' sets or `Spectra` using an in-memory backend, a direct processing might
+#' however be more efficient. Setting the chunk size to `Inf` will disable
+#' the chunk-wise processing.
+#'
+#' For some backends a certain type of splitting and chunk-wise processing
+#' might be preferable. The `MsBackendMzR` backend for example needs to load
+#' the MS data from the original (mzML) files, hence chunk-wise processing
+#' on a per-file basis would be ideal. The [backendParallelFactor()] function
+#' for `MsBackend` allows backends to suggest a preferred splitting of the
+#' data by returning a `factor` defining the respective data chunks. The
+#' `MsBackendMzR` returns for example a `factor` based on the *dataStorage*
+#' spectra variable. A `factor` of length 0 is returned if no particular
+#' preferred splitting should be performed. The suggested chunk definition
+#' will be used if no finite `processingChunkSize()` is defined. Setting
+#' the `processingChunkSize` overrides `backendParallelFactor`.
+#'
+#' See the *Large-scale data handling and processing with Spectra* for more
+#' information and examples.
+#'
+#' Functions to configure parallel or chunk-wise processing:
+#'
+#' - `processingChunkSize()`: allows to get or set the size of the chunks for
+#'   parallel processing or chunk-wise processing of a `Spectra` in general.
+#'   With a value of `Inf` (the default) no chunk-wise processing will be
+#'   performed.
+#'
+#' - `processingChunkFactor()`: returns a `factor` defining the chunks into
+#'   which a `Spectra` will be split for chunk-wise (parallel) processing.
+#'   A `factor` of length 0 indicates that no chunk-wise processing will be
+#'   performed.
+#'
+#' @note
+#'
+#' Some backends might not support parallel processing at all.
+#' For these, the `backendBpparam()` function will always return a
+#' `SerialParam()` independently on how parallel processing was defined.
+#'
+#' @param x `Spectra`.
+#'
+#' @param value `integer(1)` defining the chunk size.
+#'
+#' @return `processingChunkSize()` returns the currently defined processing
+#'     chunk size (or `Inf` if it is not defined). `processingChunkFactor()`
+#'     returns a `factor` defining the chunks into which `x` will be split
+#'     for (parallel) chunk-wise processing or a `factor` of length 0 if
+#'     no splitting is defined.
+#'
+#' @author Johannes Rainer
+#'
+#' @export
+processingChunkSize <- function(x) {
+    if (.hasSlot(x, "processingChunkSize"))
+        x@processingChunkSize
+    else Inf
+}
+
+#' @rdname processingChunkSize
+#'
+#' @export
+`processingChunkSize<-` <- function(x, value) {
+    if (length(value) != 1L)
+        stop("'value' has to be of length 1")
+    if (!.hasSlot(x, "processingChunkSize"))
+        x <- updateObject(x)
+    x@processingChunkSize <- value
+    x
+}
+
+#' @rdname processingChunkSize
+#'
+#' @export
+processingChunkFactor <- function(x) {
+    if (!inherits(x, "Spectra"))
+        stop("'x' is supposed to be a 'Spectra' object")
+    .parallel_processing_factor(x)
+}
+
+#' @title Filter peaks based on spectra and peaks variable ranges
+#'
+#' @description
+#'
+#' The `filterPeaksRanges()` function allows to filter the peaks matrices of a
+#' [Spectra] object using any set of range-based filters on numeric spectra
+#' variables or peaks variables. These ranges can be passed to the function
+#' using the `...` as `<variable name> = <range>` pairs. `<variable name>`
+#' has to be an available spectra or peaks variable. `<range>` can be a
+#' `numeric` of length 2 defining the lower and upper boundary, or a `numeric`
+#' two-column matrix (multi-row matrices are also supported, see further
+#' below). `filterPeaksRanges(s, mz = c(200, 300))` would for example reduce
+#' the peaks matrices of the `Spectra` object `s` to mass peaks with an m/z
+#' value between 200 and 300. `filterPeaksRanges()` returns the original
+#' `Spectra` object with the filter operation added to the processing queue.
+#' Thus, the filter gets **only** applied when the peaks data gets extracted
+#' with `mz()`, `intensity()` or `peaksData()`. If ranges for both spectra
+#' **and** peaks variables are defined, the function evaluates first whether
+#' the spectra variable value for a spectrum is within the provided range and,
+#' if so, applies also the peaks variable-based filter (otherwise an empty
+#' peaks matrix is returned).
+#'
+#' If more than one spectra variable and/or peaks variable are defined, their
+#' filter results are combined with a logical AND: a peak matrix is only
+#' returned for a spectrum if all values of spectra variables are within the
+#' provided (respective) ranges for spectra variables, and this matrix is
+#' further filtered to contain only those peaks which values are within the
+#' provided peaks variable ranges.
+#'
+#' **Filtering with multiple ranges** per spectra and peaks variables is also
+#' supported: ranges can also be provided as multi-row numeric (two-column)
+#' matrices. In this case, the above described procedure is applied for each
+#' row separately and their results are combined with a logical OR, i.e.
+#' peaks matrices are returned that match any of the conditions/filters
+#' of a row. The number of rows of the provided ranges (being it for spectra
+#' or peaks variables) have to match.
+#'
+#' **Missing value handling**: any comparison which involves a missing value
+#' (being it a spectra variable value, a peaks variable value or a value
+#' in one of the provided ranges) is treated as a logical `FALSE`. For
+#' example, if the retention time of a spectrum is `NA` and the data is
+#' filtered using a retention time range, an empty peaks matrix is returned
+#' (for `keep = TRUE`, for `keep = FALSE` the full peaks matrix is returned).
+#'
+#' @note
+#'
+#' In contrast to some other *filter* functions, this function does not provide
+#' a `msLevel` parameter that allows to define the MS level of spectra on which
+#' the filter should be applied. The filter(s) will always be applied to
+#' **all** spectra (irrespectively of their MS level). Through combination of
+#' multiple filter ranges it is however possible to apply MS level-dependent
+#' filters (see examples below for details).
+#'
+#' The filter will not be applied immediately to the data but only executed when
+#' the mass peak data is accessed (through `peaksData()`, `mz()` or
+#' `intensity()`) or by calling `applyProcessing()`.
+#'
+#' @param object A [Spectra] object.
+#'
+#' @param ... the ranges for the spectra and/or peaks variables. Has to be
+#'     provided as `<name> = <range>` pairs with `<name>` being the name of a
+#'     spectra or peaks variable (of numeric data type) and `<range>` being
+#'     either a `numeric` of length 2 or a `numeric` two column matrix (see
+#'     function desription above for details),
+#'
+#' @param keep `logical(1)` whether to keep (default) or remove peaks that
+#'     match the provided range(s).
+#'
+#' @author Johannes Rainer
+#'
+#' @name filterPeaksRanges
+#'
+#' @export
+#'
+#' @examples
+#'
+#' ## Define a test Spectra
+#' d <- data.frame(rtime = c(123.2, 134.2), msLevel = c(1L, 2L))
+#' d$mz <- list(c(100.1, 100.2, 100.3, 200.1, 200.2, 300.3),
+#'     c(100.3, 100.4, 200.2, 400.3, 400.4))
+#' ## Use the index of the mass peak within the spectrum as index for
+#' ## better illustration of filtering results
+#' d$intensity <- list(c(1:6), 1:5)
+#' s <- Spectra(d)
+#' s
+#'
+#' ## Filter peaks removing all mass peaks with an m/z between 200 and 300
+#' res <- filterPeaksRanges(s, mz = c(200, 300), keep = FALSE)
+#' res
+#'
+#' ## The Spectra object has still the same length and spectra variables
+#' length(res)
+#' res$rtime
+#'
+#' ## The filter gets applied when mass peak data gets extracted, using either
+#' ## `mz()`, `intensity()` or `peaksData()`. The filtered peaks data does
+#' ## not contain any mass peaks with m/z values between 200 and 300:
+#' peaksData(res)[[1L]]
+#' peaksData(res)[[2L]]
+#'
+#' ## We next combine spectra and filter variables. We want to keep only mass
+#' ## peaks of MS2 spectra that have an m/z between 100 and 110.
+#' res <- filterPeaksRanges(s, mz = c(100, 110), msLevel = c(2, 2))
+#' res
+#' length(res)
+#'
+#' ## Only data for peaks are returned for which the spectra's MS level is
+#' ## between 2 and 2 and with an m/z between 100 and 110. The peaks data for
+#' ## the first spectrum, that has MS level 1, is thus empty:
+#' peaksData(res)[[1L]]
+#'
+#' ## While the peaks matrix for the second spectrum (with MS level 2) contains
+#' ## the mass peaks with m/z between 100 and 110.
+#' peaksData(res)[[2L]]
+#'
+#' ## To keep also the peaks data for the first spectrum, we need to define
+#' ## an additional set of ranges, which we define using a second row in each
+#' ## ranges matrix. We use the same filter as above, i.e. keeping only mass
+#' ## peaks with an m/z between 100 and 110 for spectra with MS level 2, but
+#' ## add an additional row for MS level 1 spectra keeping mass peaks with an
+#' ## m/z between 0 and 2000. Filter results of different rows are combined
+#' ## using a logical OR, i.e. peaks matrices with mass peaks are returned
+#' ## matching either the first, or the second row.
+#' res <- filterPeaksRanges(s, mz = rbind(c(100, 110), c(0, 1000)),
+#'     msLevel = rbind(c(2, 2), c(1, 1)))
+#'
+#' ## The results for the MS level 2 spectrum are the same as before, but with
+#' ## the additional row we keep the full peaks matrix of the MS1 spectrum:
+#' peaksData(res)[[1L]]
+#' peaksData(res)[[2L]]
+#'
+#' ## As a last example we define a filter that keeps all mass peaks with an
+#' ## m/z either between 100 and 200, or between 300 and 400.
+#' res <- filterPeaksRanges(s, mz = rbind(c(100, 200), c(300, 400)))
+#' peaksData(res)[[1L]]
+#' peaksData(res)[[2L]]
+#'
+#' ## Such filters could thus be defined to restrict/filter the MS data to
+#' ## specific e.g. retention time and m/z ranges.
+filterPeaksRanges <- function(object, ..., keep = TRUE) {
+    if (!inherits(object, "Spectra"))
+        stop("'object' is expected to be a 'Spectra' object.")
+    dots <- list(...)
+    variables <- names(dots)
+    if (!length(variables))
+        return(object)
+    ## check that:
+    ## - variables are in spectraVariables
+    pvars <- peaksVariables(object)
+    svars <- spectraVariables(object)
+    if (!all(variables %in% c(svars, pvars)))
+        stop("Provided filter variable(s): ",
+             paste0("\"", variables[!variables %in% c(svars, pvars)], "\"",
+                    collapse = ", "), " are not valid spectra variables. ",
+             "Use 'spectraVariables(object)' and 'peaksVariables()' to list ",
+             "available variables.")
+    ## - range parameters are defined correctly
+    err <- paste0("Range parameters have to be either a 'numeric' of length ",
+                  "2 or a 'numeric' matrix with two columns.")
+    dots <- lapply(dots, function(z) {
+        if (is.null(nrow(z))) {
+            if (length(z) != 2)
+                stop(err)
+            z <- matrix(z, ncol = 2)
+        }
+        if (!is.matrix(z) | !is.numeric(z)) stop(err)
+        z
+    })
+    ## - number for rows of matrices matches.
+    nr <- unlist(lapply(dots, nrow), use.names = FALSE)
+    if (any(nr != nr[1L]))
+        stop("Number of rows of the range matrices have to match.")
+    ## OK, now proceed to split by svar and pvar and pass to the peaks function.
+    pvars <- intersect(variables, pvars)
+    svars <- intersect(variables, svars)
+    object <- addProcessing(object, .peaks_filter_ranges, ranges = dots,
+                            svars = svars, pvars = pvars,
+                            spectraVariables = c(svars, "msLevel"), keep = keep)
+    if (keep) keep_or_remove <- "select"
+    else keep_or_remove <- "remove"
+    object@processing <- .logging(
+        object@processing, "Filter: ", keep_or_remove, " peaks based on ",
+        "user-provided ranges for ", length(variables), " variables")
     object
 }

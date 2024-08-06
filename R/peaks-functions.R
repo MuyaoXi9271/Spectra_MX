@@ -87,7 +87,7 @@ NULL
                                     msLevel = spectrumMsLevel, ...) {
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
-    x[which(between(x[, "intensity"], intensity)), , drop = FALSE]
+    x[which(MsCoreUtils::between(x[, "intensity"], intensity)), , drop = FALSE]
 }
 
 #' @description
@@ -146,8 +146,9 @@ NULL
                                    keep = TRUE, ...) {
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
-    no_match <- is.na(closest(x[, "mz"], mz, tolerance = tolerance, ppm = ppm,
-                              duplicates = "keep", .check = FALSE))
+    no_match <- is.na(MsCoreUtils::closest(x[, "mz"], mz, tolerance = tolerance,
+                                           ppm = ppm, duplicates = "keep",
+                                           .check = FALSE))
     if (keep) x[!no_match, , drop = FALSE]
     else x[no_match, , drop = FALSE]
 }
@@ -170,8 +171,8 @@ NULL
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
     if (keep)
-        x[between(x[, "mz"], mz), , drop = FALSE]
-    else x[!between(x[, "mz"], mz), , drop = FALSE]
+        x[MsCoreUtils::between(x[, "mz"], mz), , drop = FALSE]
+    else x[!MsCoreUtils::between(x[, "mz"], mz), , drop = FALSE]
 }
 
 #' @description
@@ -179,6 +180,11 @@ NULL
 #' Bin peaks of a spectrum.
 #'
 #' @param mids mid points. This parameter is mandatory.
+#'
+#' @param zero.rm `logical`  indicating whether to remove bins with zero
+#'     intensity. Defaults to `TRUE`, meaning the function will discard bins
+#'     created with an intensity of 0 to enhance memory efficiency.
+#'
 #'
 #' @inheritParams .peaks_remove
 #'
@@ -191,12 +197,15 @@ NULL
                                     by = binSize),
                        agg_fun = sum,
                        mids,
-                       msLevel = spectrumMsLevel, ...) {
+                       msLevel = spectrumMsLevel, zero.rm = TRUE, ...) {
     if (!(spectrumMsLevel %in% msLevel))
         return(x)
     bins <- MsCoreUtils::bin(x[, 2], x[, 1], size = binSize, breaks = breaks,
                              FUN = agg_fun, returnMids = FALSE)
-    cbind(mz = mids, intensity = bins)
+    if (zero.rm) {
+        keep <- which(bins != 0)
+        cbind(mz = mids[keep], intensity = bins[keep])
+    } else cbind(mz = mids, intensity = bins)
 }
 
 #' @importFrom stats quantile
@@ -226,7 +235,7 @@ NULL
 #' between their m/z values is smaller than defined with parameters `tolerance`
 #' and `ppm`. All functions take two matrices
 #'
-#' - `joinPeaks`: maps peaks from two spectra allowing to specify the type of
+#' - `joinPeaks()`: maps peaks from two spectra allowing to specify the type of
 #'   *join* that should be performed: `type = "outer"` each peak in `x` will be
 #'   matched with each peak in `y`, for peaks that do not match any peak in the
 #'   other spectra an `NA` intensity is returned. With `type = "left"` all peaks
@@ -236,8 +245,8 @@ NULL
 #'   between `x` and `y` are returned by `type = "inner"`, i.e. only
 #'   peaks present in both spectra are reported.
 #'
-#' - `joinPeaksGnps`: matches/maps peaks between spectra with the same approach
-#'   used in GNPS: peaks are considered matching if a) the
+#' - `joinPeaksGnps()`: matches/maps peaks between spectra with the same
+#'   approach used in GNPS: peaks are considered matching if a) the
 #'   difference in their m/z values is smaller than defined by `tolerance`
 #'   and `ppm` (this is the same as `joinPeaks`) **and** b) the difference of
 #'   their m/z *adjusted* for the difference of the spectras' precursor is
@@ -250,10 +259,10 @@ NULL
 #'   `compareSpectra` should be called with `MAPFUN = joinPeaksGnps` and
 #'   `FUN = MsCoreUtils::gnps`).
 #'
-#' - `joinPeaksNone`: does not perform any peak matching but simply returns
+#' - `joinPeaksNone()`: does not perform any peak matching but simply returns
 #'   the peak matrices in a `list`. This function should be used with the
 #'   `MAPFUN` parameter of [compareSpectra()] if the spectra similarity
-#'   function used (parameter `FUN` of `compareSpectra`) performs its own
+#'   function used (parameter `FUN` of `compareSpectra()`) performs its own
 #'   peak matching and does hence not expect matched peak matrices as an input.
 #'
 #' @section Implementation notes:
@@ -270,21 +279,21 @@ NULL
 #' @param tolerance `numeric(1)` defining a constant maximal accepted difference
 #'     between m/z values of peaks from the two spectra to be matched/mapped.
 #'
-#' @param type For `joinPeaks` and `joinPeaksGnps`: `character(1)` specifying
-#'     the type of join that should be performed. See function description for
-#'     details.
+#' @param type For `joinPeaks()` and `joinPeaksGnps()`: `character(1)`
+#'     specifying the type of join that should be performed. See function
+#'     description for details.
 #'
 #' @param x `matrix` with two columns `"mz"` and `"intensity"` containing the
 #'     m/z and intensity values of the mass peaks of a spectrum.
 #'
-#' @param xPrecursorMz for `joinPeaksGnps`: `numeric(1)` with the precursor m/z
-#'     of the spectrum `x`.
+#' @param xPrecursorMz for `joinPeaksGnps()`: `numeric(1)` with the precursor
+#'     m/z of the spectrum `x`.
 #'
 #' @param y `matrix` with two columns `"mz"` and `"intensity"` containing the
 #'     m/z and intensity values of the mass peaks of a spectrum.
 #'
-#' @param yPrecursorMz for `joinPeaksGnps`: `numeric(1)` with the precursor m/z
-#'     of the spectrum `y`.
+#' @param yPrecursorMz for `joinPeaksGnps()`: `numeric(1)` with the precursor
+#'     m/z of the spectrum `y`.
 #'
 #' @param ... optional parameters passed to the [MsCoreUtils::join()] function.
 #'
@@ -407,14 +416,14 @@ joinPeaksNone <- function(x, y, ...) {
         return(x)
     }
 
-    n <- noise(x[, 1L], x[, 2L], method = method, ...)
+    n <- MsCoreUtils::noise(x[, 1L], x[, 2L], method = method, ...)
 
-    l <- localMaxima(x[, 2L], hws = halfWindowSize)
+    l <- MsCoreUtils::localMaxima(x[, 2L], hws = halfWindowSize)
 
     p <- which(l & x[, 2L] > (snr * n))
 
     if (k > 0L) {
-        cbind(mz = refineCentroids(x = x[, 1L], y = x[, 2L], p = p,
+        cbind(mz = MsCoreUtils::refineCentroids(x = x[, 1L], y = x[, 2L], p = p,
                                    k = k, threshold = threshold,
                                    descending = descending),
               intensity = x[p, 2L])
@@ -544,9 +553,10 @@ joinPeaksNone <- function(x, y, ...) {
 .peaks_deisotope <-
     function(x, substDefinition = isotopicSubstitutionMatrix("HMDB_NEUTRAL"),
              tolerance = 0, ppm = 10, charge = 1, ...) {
-        iso_grps <- isotopologues(x, substDefinition = substDefinition,
-                                  tolerance = tolerance, ppm = ppm,
-                                  charge = charge)
+        iso_grps <- MetaboCoreUtils::isotopologues(
+                                         x, substDefinition = substDefinition,
+                                         tolerance = tolerance, ppm = ppm,
+                                         charge = charge)
         if (length(iso_grps)) {
             rem <- unique(unlist(lapply(iso_grps, `[`, -1), use.names = FALSE))
             x[-rem, , drop = FALSE]
@@ -606,7 +616,7 @@ joinPeaksNone <- function(x, y, ...) {
                            msLevel = spectrumMsLevel, ...) {
     if (!spectrumMsLevel %in% msLevel || !length(x))
         return(x)
-    grps <- group(x[, "mz"], tolerance = tolerance, ppm = ppm)
+    grps <- MsCoreUtils::group(x[, "mz"], tolerance = tolerance, ppm = ppm)
     lg <- length(grps)
     if (grps[lg] == lg)
         return(x)
@@ -641,7 +651,7 @@ joinPeaksNone <- function(x, y, ...) {
                                        msLevel = spectrumMsLevel, ...) {
     if (!spectrumMsLevel %in% msLevel || !nrow(x))
         return(x)
-    keep <- is.na(closest(x[, "mz"], precursorMz, ppm = ppm,
+    keep <- is.na(MsCoreUtils::closest(x[, "mz"], precursorMz, ppm = ppm,
                           tolerance = tolerance, duplicates = "keep",
                           .check = FALSE))
     x[keep, , drop = FALSE]
@@ -661,4 +671,63 @@ joinPeaksNone <- function(x, y, ...) {
         return(x)
     pmz <- precursorMz - tolerance - ppm(precursorMz, ppm = ppm)
     x[x[, "mz"] < pmz, , drop = FALSE]
+}
+
+#' filter a peak matrix `x` by (arbitrary) numeric ranges for spectra and/or
+#' peaks variables. ranges for spectra and peaks variables are combined using
+#' a logical AND, rows in the provided range matrices with a logical OR.
+#'
+#' Used by `filterPeaksRanges()` function for `Spectra`.
+#'
+#' @param svars `character` with the spectra variables for which filter ranges
+#'     where provided.
+#'
+#' @param pvars `character` with the peaks variables for which filter ranges
+#'     where provided.
+#'
+#' @param ranges `list` with `numeric` two-column matrices with the
+#'     user-provided ranges. The number of rows of all matrices is expected
+#'     to match.
+#'
+#' @param spectrumMsLevel `integer(1)` with the MS level of the peak matrix'
+#'     spectrum.
+#'
+#' @param keep `logical(1)` whether mass peaks that match the filters should be
+#'     kept or removed.
+#'
+#' @param ... values for all spectra variables defined in `svars` are expected
+#'     to be passed through `...` as `name = value` pairs.
+#'
+#' @author Johannes Rainer
+#'
+#' @noRd
+.peaks_filter_ranges <- function(x, svars = character(),
+                                 pvars = character(),
+                                 ranges, spectrumMsLevel,
+                                 keep = TRUE, ...) {
+    svalue <- list(..., msLevel = spectrumMsLevel)
+    nx <- nrow(x)
+    sel <- rep(FALSE, nx)
+    for (i in seq_len(nrow(ranges[[1L]]))) {
+        ## check ranges for spectra variables
+        svars_ok <- vapply(svars, function(z)
+            MsCoreUtils::between(svalue[[z]], ranges[[z]][i, ]), TRUE,
+            USE.NAMES = FALSE)
+        if (!anyNA(svars_ok) && all(svars_ok)) {
+            if (length(pvars)) {
+                ## check ranges for peaks variables
+                tmp <- rowSums(do.call(cbind, lapply(pvars, function(z) {
+                    MsCoreUtils::between(x[, z], ranges[[z]][i, ])
+                }))) == length(pvars)
+                tmp[is.na(tmp)] <- FALSE
+                sel <- sel | tmp
+            } else {
+                ## No need to check further, because we have a match
+                if (keep) return(x)
+                else return(x[logical(), , drop = FALSE])
+            }
+        }
+    }
+    if (keep) x[sel, , drop = FALSE]
+    else x[!sel, , drop = FALSE]
 }

@@ -1,3 +1,92 @@
+# Spectra 1.15
+
+## Changes in 1.15.7
+
+- Change `estimatePrecursorIntensity()` to a method to avoid overrides/clashes
+  with the same-named implementation in *xcms*.
+
+## Changes in 1.15.6
+
+- Fix in `selectSpectraVariables()` for `MsBackendMzR`: ensure peaks variables
+  `"mz"` and `"intensity"` are not by default removed.
+
+## Changes in 1.15.5
+
+- Add new `filterPeaksRanges()` function to filter mass peaks by ranges on
+  numeric spectra or peak variables.
+
+## Changes in 1.15.3
+
+- For evaluation of the `Spectra`'s processing queue: call functions from the
+  *MetaboCoreUtils* directly through their namespace (`MsCoreUtils::`) to avoid
+  errors if performed in parallel on Windows machines or if called on a
+  re-loaded object.
+- New `asDataFrame()` function to convert a (small) `Spectra` object
+  into a long `DataFrame`.
+
+## Changes in 1.15.2
+
+- Add `dataStorageDataPath()` and `dataStorageDataPath<-` methods to allow
+  updating/adapting the path of the data storage files of backends supporting
+  that [issue #321](https://github.com/rformassspectrometry/Spectra/issues/321).
+
+## Changes in 1.15.1
+
+- Improve documentation for `combineSpectra()` and `combinePeaks()` [issue
+  #320](https://github.com/rformassspectrometry/Spectra/issues/320).
+
+# Spectra 1.13
+
+## Changes in 1.13.8
+
+- Add `estimatePrecursorMz()` function to *estimate* the precursor m/z for DDA
+  fragment spectra from previous MS1 spectra [issue
+  #315](https://github.com/rformassspectrometry/Spectra/issues/315).
+
+## Changes in 1.13.7
+
+- Move generics `backendBpparam()`, `backendParallelFactor()` and
+  `supportsSetBackend()` to *ProtGenerics*. Required *ProtGenerics* version
+  1.35.4 or higher.
+
+## Changes in 1.13.6
+
+- Add `filterRanges()` and `filterValues()` functions to allow filtering of a
+  Spectra object based on ranges or similarities of any existing `spectraData`
+  variables.
+
+## Changes in 1.13.5
+
+- Move generics to `ProtGenerics`. Requires `ProtGenerics` version 1.35.3.
+
+## Changes in 1.13.4
+
+- Add `entropy` and `nentropy` functions to allow to calculate the (normalized)
+  entropy for each spectrum.
+
+## Changes in 1.13.3
+
+- Fix issue in `setBackend` that might cause chunk-wise processing to be not
+  run.
+
+## Changes in 1.13.2
+
+- Add possibility to enable and perform chunk-wise (parallel) processing to
+  `Spectra`: add functions `processingChunkSize`, `backendParallelFactor` and
+  `processingChunkFactor` to set or get definition of chunks for parallel
+  processing. All functions working on peaks data use this mechanism which
+  is implemented in the internal `.peaksapply` function. The `Spectra` object
+  gains a new slot `"processingChunkSize"` that is used to define the
+  size of the processing chunks for the `Spectra`. See also [issue
+  #304](https://github.com/rformassspectrometry/Spectra/issues/304).
+  This ensures processing also of very large data sets.
+
+## Changes in 1.13.1
+
+- Fix issue with `bin` function (see
+  [issue #302](https://github.com/rformassspectrometry/Spectra/issues/303)).
+  Addition of `zero.rm` parameter to prevent creation of *empty* bins.
+
 # Spectra 1.11
 
 ## Changes in 1.11.11

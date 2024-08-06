@@ -1,6 +1,6 @@
 Package: Spectra
 Title: Spectra Infrastructure for Mass Spectrometry Data
-Version: 1.11.11
+Version: 1.15.7
 Description: The Spectra package defines an efficient infrastructure
    for storing and handling mass spectrometry spectra and functionality to
    subset, process, visualize and compare spectra data. It provides different
@@ -22,18 +22,26 @@ Authors@R: c(person(given = "RforMassSpectrometry Package Maintainer",
                     email = "mail@sebastiangibb.de",
                     role = "aut",
                     comment = c(ORCID = "0000-0001-7406-4443")),
+             person(given = "Philippine", family = "Louail",
+                    email = "philippine.louail@eurac.edu",
+                    role = c("aut"),
+                    comment = c(ORCID = "0009-0007-5429-6846")),
              person(given = "Jan", family = "Stanstrup",
                     email = "stanstrup@gmail.com",
                     role = "ctb",
                     comment = c(ORCID = "0000-0003-0541-7369")),
              person(given = "Nir", family = "Shahaf",
                     email = "gabbianon@gmail.com",
+                    role = "ctb"),
+             person(given = "Mar", family = "Garcia-Aloy",
+                    email = "mar.garcia@fmach.it",
+                    comment = c(ORCID = "0000-0002-1330-6610"),
                     role = "ctb"))
 Depends:
     R (>= 4.0.0),
     S4Vectors,
     BiocParallel,
-    ProtGenerics (>= 1.33.1)
+    ProtGenerics (>= 1.37.1)
 Imports:
     methods,
     IRanges,
@@ -64,7 +72,8 @@ VignetteBuilder: knitr
 BugReports: https://github.com/RforMassSpectrometry/Spectra/issues
 URL: https://github.com/RforMassSpectrometry/Spectra
 biocViews: Infrastructure, Proteomics, MassSpectrometry, Metabolomics
-RoxygenNote: 7.2.3
+Encoding: UTF-8
+RoxygenNote: 7.3.2
 Roxygen: list(markdown=TRUE)
 Collate:
     'hidden_aliases.R'
@@ -80,6 +89,7 @@ Collate:
     'MsBackendMemory.R'
     'MsBackendMzR-functions.R'
     'MsBackendMzR.R'
+    'Spectra-estimatePrecursorMz.R'
     'Spectra-functions.R'
     'Spectra.R'
     'Spectra-neutralLoss.R'
