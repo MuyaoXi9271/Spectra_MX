@@ -1,5 +1,22 @@
 # Spectra 1.23
 
+## Changes in 1.23.7
+
+- Add `filterNoisePeaks()` function to support removing *noise peaks* following
+  the method from Dalla Valle et al. Anal. Chem. (2025).
+
+## Changes in 1.23.6
+
+- Update citation information and add links to additional external backends.
+
+## Changes in 1.23.5
+
+- Fix reference unit test in the unit test suite for `MsBackend`.
+
+## Changes in 1.23.4
+
+- Small fixes in the documentation.
+
 ## Changes in 1.23.3
 
 - Improve documentation for the use of `SerialParam()` *vs* `SnowParam()` on

@@ -9,12 +9,21 @@
 [![build release](http://bioconductor.org/shields/build/release/bioc/Spectra.svg)](https://bioconductor.org/checkResults/release/bioc-LATEST/Spectra/)
 [![build devel](http://bioconductor.org/shields/build/devel/bioc/Spectra.svg)](https://bioconductor.org/checkResults/devel/bioc-LATEST/Spectra/)
 
+📰 Cite us:
+
+Rainer J, De Graeve M, Louail P, Gibb S, Gatto L. An Open Infrastructure for
+Mass Spectrometry Data in R. *Methods Mol Biol.* 2027;3071:29-54. doi:
+[10.1007/978-1-0716-5519-1_3](https://doi.org/10.1007/978-1-0716-5519-1_3). PMID:
+42878754.
+
+## Overview
+
 The *Spectra* package defines an efficient infrastructure for storing and
 handling mass spectrometry spectra and functionality to subset, process,
 visualize and compare spectra data.
 
 A description of its functionality and design is available in this
-[preprint](https://doi.org/10.31219/osf.io/cwt2v_v2).
+[preprint](https://doi.org/10.31219/osf.io/cwt2v_v3).
 
 *Spectra* provides different implementations (backends) to store mass
 spectrometry data. These comprise backends tuned for fast data access and
@@ -55,17 +64,30 @@ package providing it) is shown below:
   and variables. Has a minimal memory footprint because all data is retrieved
   on-the-fly from the SQL database.
 
+- `MsBackendMassIVE` (package
+  [*MsBackendMassIVE*](https://github.com/RforMassSpectrometry/MsBackendMassIVE)):
+  retrieves and caches MS data files from the MassIVE data repository.
+
 - `MsBackendMemory` (package: *Spectra*): *default* backend which keeps all data
   in memory. Optimized for fast processing.
 
 - `MsBackendMetaboLights` (package
   [*MsBackendMetaboLights*](https://github.com/rformassspectrometry/MsBackendMetaboLights)):
-  retrieves and caches MS data files from MetaboLights.
+  retrieves and caches MS data files from the MetaboLights data repository.
+
+- `MsBackendMetabolomicsWorkbench` (package
+  [*MsBackendMetabolomicsWorkbench*](https://github.com/rformassspectrometry/MsBackendMetabolomicsWorkbench)):
+  retrieves and caches MS data files from the MetabolomicsWorkbench data
+  repository.
 
 - `MsBackendMgf` (package
   [*MsBackendMgf*](https://github.com/rformassspectrometry/MsBackendMgf)): allows
   to import/export data in mascot generic format (MGF). Extends the
   `MsBackendDataFrame` and keeps thus all data, after import, in memory.
+
+- `MsBackendMongoDb`: (package
+  [*MsBackendMongoDb*](https://github.com/rformassspectrometry/MsBackendMongoDb)):
+  stores and retrieves MS data from a MongoDB noSQL database.
 
 - `MsBackendMsp` (package
   [*MsbackendMsp*](https://github.com/rformassspectrometry/MsBackendMsp)): allows
@@ -83,6 +105,11 @@ package providing it) is shown below:
   stores all MS data in a SQL database and has thus a minimal memory footprint.
   Does, in contrast to `MsBackendSql`, not keep an active SQL database
   connection and can thus support parallel processing.
+
+- `MsBackendParquet`: (package [*MsBackendParquet*](https://bioconductor.org/packagesMsBackendParquet)):
+  stores and accesses MS data in parquet files. This backend, similar to the
+  `MsBackendSql` below, has a very minimal memory footprint and is particularly
+  useful for very large data sets.
 
 - `MsBackendRawFileReader` (package
   [*MsBackendRawFileReader*](https://github.com/fgcz/MsBackendRawFileReader)):
@@ -107,8 +134,9 @@ package providing it) is shown below:
 For more information see the package
 [homepage](https://rformassspectrometry.github.io/Spectra).
 
+---
 
-# Installation
+## ⤵️ Installation
 
 The package can be installed with
 
@@ -117,12 +145,25 @@ install.packages("BiocManager")
 BiocManager::install("Spectra")
 ```
 
+## 🤝 Contribution
 
-# Contributions
+Please help us improving and completing the package! Any type of contribution
+welcome :open_hands: - including discussions, suggestions or actual code. Don't
+be afraid - we're friendly ☺️! 👉 get involved by opening an [issue](https://github.com/rformassspectrometry/Spectra/issues).
 
-Contributions are highly welcome and should follow the [contribution
-guidelines](https://rformassspectrometry.github.io/RforMassSpectrometry/articles/RforMassSpectrometry.html#contributions).
-Also, please check the coding style guidelines in the [RforMassSpectrometry
-vignette](https://rformassspectrometry.github.io/RforMassSpectrometry/articles/RforMassSpectrometry.html)
-and importantly, follow our [code of
-conduct](https://rformassspectrometry.github.io/RforMassSpectrometry/articles/RforMassSpectrometry.html#code-of-conduct).
+Please also check out the [**RforMassSpectrometry Contributions
+Guide**](https://rformassspectrometry.github.io/RforMassSpectrometry/articles/RforMassSpectrometry.html#contributions).
+
+### 📜 Code of Conduct
+
+We follow the [**RforMassSpectrometry Code of
+Conduct**](https://rformassspectrometry.github.io/RforMassSpectrometry/articles/RforMassSpectrometry.html#code-of-conduct)
+to maintain an inclusive and respectful community.
+
+## License
+
+This package is licensed under the **Artistic 2.0** license:
+📄 [https://opensource.org/license/Artistic-2.0](https://opensource.org/license/Artistic-2.0)
+
+Documentation (manuals, vignettes) is licensed under **CC BY-NC-SA 4.0**:
+📄 [https://creativecommons.org/licenses/by-nc-sa/4.0/](https://creativecommons.org/licenses/by-nc-sa/4.0/)
